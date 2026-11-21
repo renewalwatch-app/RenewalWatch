@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RenewalWatch: never miss an IT renewal, warranty or expiry</title>
+  <meta name="description" content="Track laptops, servers, software licenses, domains, SSL certificates and IT contracts in one place. Get an email before anything expires. Free for up to 25 items.">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <style>
+    .lp-nav { max-width: 1100px; margin: auto; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .lp-nav .logo { color: var(--ink); }
+    .lp-nav .logo-mark { color: #fff; }
+    .hero { max-width: 1100px; margin: auto; padding: 50px 20px 40px; display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: center; }
+    .hero h1 { font-size: clamp(2rem, 4.5vw, 3.1rem); letter-spacing: -.02em; }
+    .hero p.lead { font-size: 1.15rem; color: #334155; max-width: 34em; }
+    .hero .ctas { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+    .hero .btn { padding: 12px 20px; font-size: 16px; }
+    .mock { background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 20px 50px rgba(15,23,42,.12); padding: 16px; }
+    .mock-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); font-size: 14px; }
+    .mock-row:last-child { border-bottom: 0; }
+    @media (max-width: 860px) { .hero { grid-template-columns: 1fr; padding-top: 24px; } }
+    section.band { max-width: 1100px; margin: auto; padding: 40px 20px; }
+    section.band h2 { font-size: 1.7rem; text-align: center; margin-bottom: 8px; }
+    section.band > p.center { text-align: center; color: var(--muted); max-width: 640px; margin: 0 auto 28px; }
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 860px) { .features { grid-template-columns: 1fr; } }
+    .feature { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    .feature .ico { font-size: 24px; }
+    .feature h3 { margin: 8px 0 6px; }
+    .feature p { margin: 0; color: #475569; font-size: 14px; }
+    .pricing { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 820px; margin: auto; }
+    @media (max-width: 720px) { .pricing { grid-template-columns: 1fr; } }
+    .price-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+    .price-card.pro { border: 2px solid var(--brand); }
+    .price { font-size: 2rem; font-weight: 800; margin: 6px 0 14px; }
+    .price-card ul { padding-left: 20px; margin: 0 0 20px; }
+    .price-card li { margin: 6px 0; }
+    .faq { max-width: 760px; margin: auto; }
+    .faq details { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
+    .faq summary { font-weight: 700; cursor: pointer; }
+    footer { text-align: center; color: var(--muted); font-size: 13px; padding: 30px 20px 50px; }
+  </style>
+</head>
+<body>
+  <nav class="lp-nav">
+    <a class="logo" href="/"><span class="logo-mark">R</span>RenewalWatch</a>
+    <div class="chip-row"><a class="btn" href="/app">Sign in</a><a class="btn primary" href="/app">Start free</a></div>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <h1>Never get surprised by an IT renewal again.</h1>
+      <p class="lead">Warranties, servers, software licenses, domains, SSL certificates and vendor contracts in one place. RenewalWatch emails you before anything expires, so nothing lapses and nothing auto-renews without a second look.</p>
+      <div class="ctas"><a class="btn primary" href="/app">Start free, no card needed</a><a class="btn" href="#pricing">See pricing</a></div>
+      <p class="small muted" style="margin-top:12px">Built for the one-person IT department, office managers and small MSPs.</p>
+    </div>
+    <div class="mock" aria-hidden="true">
+      <div class="small muted" style="font-weight:700;margin-bottom:6px">COMING UP</div>
+      <div class="mock-row"><span><strong>FW-01 FortiGate subscription</strong><div class="sub">Network device</div></span><span class="badge b-red">3d overdue</span></div>
+      <div class="mock-row"><span><strong>company.ca domain</strong><div class="sub">Domain name · not auto-renewing</div></span><span class="badge b-amber">6d left</span></div>
+      <div class="mock-row"><span><strong>Microsoft 365 Business Premium</strong><div class="sub">SaaS · 36 of 40 seats used</div></span><span class="badge b-amber">21d left</span></div>
+      <div class="mock-row"><span><strong>DC01 (Windows Server 2016)</strong><div class="sub">OS end of support</div></span><span class="badge b-blue">52d left</span></div>
+      <div class="mock-row"><span><strong>Reception laptop</strong><div class="sub">Warranty ends</div></span><span class="badge b-blue">80d left</span></div>
+    </div>
+  </header>
+
+  <section class="band">
+    <h2>Everything that expires, in one list</h2>
+    <p class="center">Spreadsheets don't send reminders. Vendor emails get buried. RenewalWatch keeps the dates and nags you at the right time.</p>
+    <div class="features">
+      <div class="feature"><div class="ico">💻</div><h3>Hardware and warranties</h3><p>Laptops, desktops, printers, phones and monitors with serials, asset tags, who has them and when coverage ends.</p></div>
+      <div class="feature"><div class="ico">🖥️</div><h3>Servers and network</h3><p>Hostnames, IPs, roles, OS end-of-support dates, patch dates, firmware versions and support contracts for servers, VMs, firewalls and switches.</p></div>
+      <div class="feature"><div class="ico">🔑</div><h3>Software and SaaS</h3><p>Licenses and subscriptions with seat counts, so you spot unused seats before you pay for them again.</p></div>
+      <div class="feature"><div class="ico">🌐</div><h3>Domains and SSL</h3><p>Expiry dates for domains and certificates, with a warning when something isn't set to auto-renew.</p></div>
+      <div class="feature"><div class="ico">📄</div><h3>Contracts and compliance</h3><p>ISP circuits, phone systems, leases, maintenance contracts, cyber insurance and audits.</p></div>
+      <div class="feature"><div class="ico">✅</div><h3>Recurring IT tasks</h3><p>Backup restore tests, access reviews, password rotations and battery swaps that repeat on a schedule.</p></div>
+      <div class="feature"><div class="ico">📧</div><h3>Email reminders</h3><p>A digest lands in your inbox before each date, and weekly for anything overdue.</p></div>
+      <div class="feature"><div class="ico">👋</div><h3>Offboarding checklists</h3><p>See everything assigned to a departing employee and print a checklist of licenses to reclaim and gear to collect.</p></div>
+      <div class="feature"><div class="ico">📊</div><h3>Spend forecast and health checks</h3><p>See renewal costs by month for the next year, plus unpatched servers, stale firmware and untested backups.</p></div>
+    </div>
+  </section>
+
+  <section class="band" id="pricing">
+    <h2>Simple pricing</h2>
+    <p class="center">Start free. Upgrade when you want the whole IT picture.</p>
+    <div class="pricing">
+      <div class="price-card">
+        <h3>Free</h3><div class="price">$0</div>
+        <ul>
+          <li>Up to 25 items</li>
+          <li>Computers, printers, phones, peripherals and warranties</li>
+          <li>Email reminders 30 and 7 days before</li>
+          <li>Dashboard and CSV export</li>
+        </ul>
+        <a class="btn" href="/app" style="width:100%;justify-content:center">Start free</a>
+      </div>
+      <div class="price-card pro">
+        <h3>Pro</h3><div class="price"><span id="price-label">$9/month</span></div>
+        <ul>
+          <li>Unlimited items</li>
+          <li>Servers, VMs, network gear, storage, UPS and backups</li>
+          <li>Software licenses, SaaS, security tools and cloud accounts</li>
+          <li>Domains, SSL certificates, contracts, ISP and compliance</li>
+          <li>Recurring IT tasks</li>
+          <li>Custom reminder schedule and extra recipients</li>
+          <li>Team members</li>
+          <li>Spend forecast, license check and health checks</li>
+          <li>People view and offboarding checklists</li>
+          <li>CSV import from your existing spreadsheet</li>
+        </ul>
+        <a class="btn primary" href="/app" style="width:100%;justify-content:center">Start free, upgrade anytime</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="band faq">
+    <h2>Questions</h2>
+    <details><summary>Do I need to install anything?</summary><p>No. It runs in your browser. There are no agents and no network scans. You add items by hand or import a spreadsheet.</p></details>
+    <details><summary>Do you store passwords or license keys?</summary><p>No, and we ask you not to. Keep secrets in a password manager. RenewalWatch tracks dates, owners, costs and details like hostnames and seat counts.</p></details>
+    <details><summary>Can my team use it?</summary><p>Yes, on Pro. Invite colleagues by email and everyone sees the same inventory. Reminders can go to a shared inbox like it@yourcompany.ca.</p></details>
+    <details><summary>Can I bring my existing spreadsheet?</summary><p>Yes, on Pro. Download the import template, paste in your rows and upload it.</p></details>
+    <details><summary>What happens if I cancel Pro?</summary><p>Nothing is deleted. You keep read and edit access to everything. Adding new items beyond the free limit, or adding Pro categories, needs Pro again.</p></details>
+  </section>
+
+  <footer>
+    © <span id="yr"></span> RenewalWatch · Made in Canada 🇨🇦 · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
+  </footer>
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+    fetch('/api/config').then(r => r.json()).then(c => { if (c.priceLabel) document.getElementById('price-label').textContent = c.priceLabel; }).catch(() => {});
+  </script>
+</body>
+</html>
