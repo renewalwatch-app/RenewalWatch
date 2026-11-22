@@ -4,7 +4,8 @@ const SUPABASE_CDN = 'https://esm.sh/@supabase/supabase-js@2';
 const state = {
   cfg: null, sb: null, session: null, recovery: false,
   workspaces: [], ws: null, items: [], members: [], invites: [],
-  view: 'dashboard', filters: { q: '', group: '', location: '', status: 'open' }, peopleQ: '',
+  view: 'dashboard', filters: { q: '', group: '', location: '', status: 'open' },
+  people: { q: '', location: '', group: '', sort: 'name', open: new Set() },
 };
 const root = document.getElementById('app');
 
@@ -403,7 +404,7 @@ function filteredItems() {
     if (status === 'open' && i.status === 'retired') return false;
     if (status && status !== 'open' && i.status !== status) return false;
     if (group && CAT[i.category]?.group !== group) return false;
-    if (loc && (i.location || '') !== loc) return false;
+    if (loc && nameKey(i.location) !== nameKey(loc)) return false;
     if (needle) {
       const hay = [i.name, i.vendor, i.model, i.serial, i.asset_tag, i.assigned_to, i.location, i.notes, CAT[i.category]?.label,
         ...Object.values(i.details || {})].join(' ').toLowerCase();
@@ -414,7 +415,7 @@ function filteredItems() {
 }
 
 function viewInventory() {
-  const locations = [...new Set(state.items.map(i => i.location).filter(Boolean))].sort();
+  const locations = [...canonicalNames('location').values()].sort();
   const f = state.filters;
   return `
     <div class="page-head"><h1>Inventory</h1>
@@ -468,8 +469,8 @@ function detailFieldsHtml(catId, details) {
 function openItemModal(item = null) {
   const it = item || { category: 'computer', status: 'active', details: {} };
   const pro = isPro();
-  const people = [...new Set(state.items.map(i => i.assigned_to).filter(Boolean))].sort();
-  const locations = [...new Set(state.items.map(i => i.location).filter(Boolean))].sort();
+  const people = [...canonicalNames('assigned_to').values()].sort();
+  const locations = [...canonicalNames('location').values()].sort();
   const catOptions = GROUPS.map(g => `<optgroup label="${esc(g)}">${CATEGORIES.filter(c => c.group === g).map(c => {
     const locked = !pro && !isFreeCategory(c.id) && c.id !== it.category;
     return `<option value="${c.id}" ${c.id === it.category ? 'selected' : ''} ${locked ? 'disabled' : ''}>${esc(c.label)}${!isFreeCategory(c.id) && !pro ? ' (Pro)' : ''}</option>`;
@@ -561,6 +562,7 @@ async function saveItem(form, existing) {
     recur_months: num(form.recur_months.value), status: form.status.value, auto_renew: form.auto_renew.checked,
     notes: txt(form.notes.value), details: readDetails(form),
   };
+  snapNames(row, existing?.id);
   const btn = form.querySelector('button.primary');
   btn.disabled = true;
   const q = existing
@@ -612,15 +614,54 @@ async function markRenewed(id) {
 }
 
 // ---------------- people / offboarding ----------------
-function peopleMap() {
+// Reuse the existing spelling of a person or location, so "jane smith" saves as "Jane Smith".
+function snapNames(row, skipId) {
+  for (const field of ['assigned_to', 'location']) {
+    const v = cleanName(row[field]);
+    if (!v) { row[field] = null; continue; }
+    const match = state.items.find(i => i.id !== skipId && nameKey(i[field]) === v.toLowerCase());
+    row[field] = match ? cleanName(match[field]) : v;
+  }
+}
+// Names and locations match regardless of capitalization or extra spaces.
+const cleanName = v => (v || '').trim().replace(/\s+/g, ' ');
+const nameKey = v => cleanName(v).toLowerCase();
+const isLicense = i => CAT[i.category]?.group === 'Software & Cloud';
+
+// Most common spelling of a name or location across items, so "jane smith" and "Jane Smith" show as one.
+function canonicalNames(field) {
+  const counts = new Map();
+  for (const i of state.items) {
+    const disp = cleanName(i[field]);
+    if (!disp) continue;
+    const k = disp.toLowerCase();
+    if (!counts.has(k)) counts.set(k, {});
+    counts.get(k)[disp] = (counts.get(k)[disp] || 0) + 1;
+  }
+  const out = new Map();
+  for (const [k, spellings] of counts) out.set(k, Object.entries(spellings).sort((a, b) => b[1] - a[1])[0][0]);
+  return out;
+}
+
+function peopleList() {
+  const names = canonicalNames('assigned_to'), locs = canonicalNames('location');
   const map = new Map();
   for (const i of openItems()) {
-    const p = (i.assigned_to || '').trim();
-    if (!p) continue;
-    if (!map.has(p)) map.set(p, []);
-    map.get(p).push(i);
+    const k = nameKey(i.assigned_to);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(i);
   }
-  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return [...map.entries()].map(([key, items]) => {
+    const dates = items.flatMap(keyDates).sort((a, b) => a.left - b.left);
+    return {
+      key, name: names.get(key), items,
+      locations: [...new Set(items.map(i => locs.get(nameKey(i.location))).filter(Boolean))].sort(),
+      groups: new Set(items.map(i => CAT[i.category]?.group)),
+      lic: items.filter(isLicense).length, hw: items.filter(i => !isLicense(i)).length,
+      next: dates[0] || null,
+    };
+  });
 }
 
 function viewPeople() {
@@ -629,20 +670,64 @@ function viewPeople() {
     'One-click printable offboarding checklist: accounts to disable, licenses to reclaim, hardware to collect',
     'Never pay for a departed employee\'s license again',
   ]);
-  const needle = state.peopleQ.toLowerCase();
-  const people = peopleMap().filter(([p]) => p.toLowerCase().includes(needle));
-  return `<div class="page-head"><h1>People</h1><input id="people-q" style="max-width:260px" placeholder="Search people" value="${esc(state.peopleQ)}"></div>
-    ${people.length ? `<div class="cols">${people.map(([p, list]) => `<div class="card person-card">
-      <h3><span>${esc(p)} <span class="muted small">· ${list.length} item${list.length === 1 ? '' : 's'}</span></span>
-        <button class="btn small" data-action="offboard" data-person="${esc(p)}">Offboarding checklist</button></h3>
-      <ul class="list-plain">${list.map(i => `<li><a href="#" data-action="edit-item" data-id="${i.id}">${esc(i.name)}</a><span class="sub">${esc(CAT[i.category]?.label || '')}</span></li>`).join('')}</ul>
-    </div>`).join('')}</div>`
-      : '<div class="card empty">No one has items assigned yet. Fill in "Assigned to" on an item and they\'ll show up here.</div>'}`;
+  const f = state.people;
+  const locations = [...new Set(peopleList().flatMap(p => p.locations))].sort();
+  return `<div class="page-head"><h1>People</h1></div>
+    <div class="filters">
+      <input id="p-q" placeholder="Search name, item, serial…" value="${esc(f.q)}">
+      <select id="p-location"><option value="">All locations</option>${locations.map(l => `<option ${f.location === l ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <select id="p-group"><option value="">Has any item</option>${GROUPS.map(g => `<option value="${esc(g)}" ${f.group === g ? 'selected' : ''}>Has ${esc(g.toLowerCase())}</option>`).join('')}</select>
+      <select id="p-sort">
+        ${[['name', 'Sort: Name A–Z'], ['items', 'Sort: Most items'], ['next', 'Sort: Next date soonest'], ['location', 'Sort: Location']]
+          .map(([v, l]) => `<option value="${v}" ${f.sort === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    <div class="card" style="padding:0" id="people-table">${peopleTable()}</div>`;
 }
 
-function printOffboarding(person) {
-  const list = openItems().filter(i => (i.assigned_to || '').trim() === person);
-  const isLicense = i => CAT[i.category]?.group === 'Software & Cloud';
+function peopleTable() {
+  const f = state.people, needle = f.q.trim().toLowerCase();
+  let rows = peopleList().filter(p => {
+    if (f.location && !p.locations.includes(f.location)) return false;
+    if (f.group && !p.groups.has(f.group)) return false;
+    if (needle) {
+      const hay = [p.name, ...p.locations, ...p.items.flatMap(i => [i.name, i.serial, i.asset_tag, i.model, i.details?.hostname])].join(' ').toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+  const by = {
+    name: (a, b) => a.name.localeCompare(b.name),
+    items: (a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name),
+    next: (a, b) => (a.next?.left ?? 1e9) - (b.next?.left ?? 1e9),
+    location: (a, b) => (a.locations[0] || '~').localeCompare(b.locations[0] || '~') || a.name.localeCompare(b.name),
+  };
+  rows.sort(by[f.sort] || by.name);
+  const locNames = canonicalNames('location');
+  if (!state.items.some(i => cleanName(i.assigned_to))) return '<div class="empty">No one has items assigned yet. Fill in "Assigned to" on an item and they\'ll show up here.</div>';
+  if (!rows.length) return '<div class="empty">No people match these filters.</div>';
+  return `<div class="table-wrap"><table>
+    <tr><th>Name</th><th>Location</th><th>Hardware</th><th>Licenses</th><th>Next date</th><th></th></tr>
+    ${rows.map(p => {
+      const open = f.open.has(p.key);
+      return `<tr class="clickable" data-action="toggle-person" data-key="${esc(p.key)}">
+        <td><strong>${open ? '▾' : '▸'} ${esc(p.name)}</strong><div class="sub">${p.items.length} item${p.items.length === 1 ? '' : 's'}</div></td>
+        <td>${esc(p.locations.join(', '))}</td>
+        <td>${p.hw}</td><td>${p.lic}</td>
+        <td>${p.next ? `${fmtDate(p.next.date)}<div>${badge(p.next.left)}</div>` : '<span class="muted">—</span>'}</td>
+        <td style="text-align:right"><button class="btn small" data-action="offboard" data-key="${esc(p.key)}">Offboarding checklist</button></td>
+      </tr>
+      ${open ? `<tr><td colspan="6" style="background:#f8fafc;padding:6px 16px 12px">
+        <ul class="list-plain">${p.items.map(i => `<li><span><a href="#" data-action="edit-item" data-id="${i.id}">${esc(i.name)}</a>
+          <div class="sub">${esc(CAT[i.category]?.label || '')}${i.serial ? ' · S/N ' + esc(i.serial) : ''}${i.location ? ' · ' + esc(locNames.get(nameKey(i.location)) || i.location) : ''}</div></span>
+          <span class="nw">${i.expiry_date ? badge(daysLeft(i.expiry_date)) : ''}</span></li>`).join('')}</ul></td></tr>` : ''}`;
+    }).join('')}
+  </table></div>`;
+}
+
+function printOffboarding(key) {
+  const list = openItems().filter(i => nameKey(i.assigned_to) === key);
+  const person = canonicalNames('assigned_to').get(key) || key;
   const hw = list.filter(i => !isLicense(i)), lic = list.filter(isLicense);
   const box = '☐';
   let area = document.getElementById('print-area');
@@ -839,6 +924,7 @@ export function csvRowsToItems(rows, wsId) {
 async function importCsv(file) {
   const text = await file.text();
   const items = csvRowsToItems(parseCsv(text), state.ws.id);
+  items.forEach(i => snapNames(i));
   if (!items.length) return toast('No rows with a "name" column found', true);
   if (!confirm(`Import ${items.length} item${items.length === 1 ? '' : 's'}?`)) return;
   let added = 0;
@@ -875,7 +961,13 @@ document.addEventListener('click', async e => {
     case 'manage-billing': return manageBilling();
     case 'export-csv': return exportCsv();
     case 'csv-template': return csvTemplate();
-    case 'offboard': return printOffboarding(el.dataset.person);
+    case 'offboard': e.stopPropagation(); return printOffboarding(el.dataset.key);
+    case 'toggle-person': {
+      const k = el.dataset.key, set = state.people.open;
+      set.has(k) ? set.delete(k) : set.add(k);
+      document.getElementById('people-table').innerHTML = peopleTable();
+      return;
+    }
     case 'remove-member': {
       if (!confirm('Remove this person from the workspace?')) return;
       const { error } = await state.sb.from('members').delete().eq('workspace_id', state.ws.id).eq('user_id', el.dataset.user);
@@ -909,10 +1001,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('input', e => {
   const id = e.target.id;
   if (id === 'f-q') { state.filters.q = e.target.value; document.getElementById('inv-table').innerHTML = inventoryTable(); }
-  if (id === 'people-q') {
-    state.peopleQ = e.target.value; render();
-    const el = document.getElementById('people-q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length);
-  }
+  if (id === 'p-q') { state.people.q = e.target.value; document.getElementById('people-table').innerHTML = peopleTable(); }
 });
 
 document.addEventListener('change', async e => {
@@ -920,6 +1009,10 @@ document.addEventListener('change', async e => {
   if (['f-group', 'f-location', 'f-status'].includes(id)) {
     state.filters[id.slice(2)] = e.target.value;
     document.getElementById('inv-table').innerHTML = inventoryTable();
+  }
+  if (['p-location', 'p-group', 'p-sort'].includes(id)) {
+    state.people[id.slice(2)] = e.target.value;
+    document.getElementById('people-table').innerHTML = peopleTable();
   }
   if (id === 'ws-switch') {
     state.ws = state.workspaces.find(w => w.id === e.target.value);
