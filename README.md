@@ -122,4 +122,4 @@ The Pro plan adds:
 4. `api/config.js`: public settings for the browser
 5. `api/stripe-webhook.js`: switches workspaces to Pro or Free
 6. `api/cron-reminders.js`: the daily reminder emails
-7. `supabase/schema.sql`: tables, security rules and free-plan limits
+7. `supabase/schema.sql`: tables, security rules and free-plan limits 
