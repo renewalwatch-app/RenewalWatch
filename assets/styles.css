@@ -139,3 +139,4 @@ tr.clickable:hover td { background: #f8fafc; }
   .card { padding: 14px; }
 }
 .list-plain li > span:first-child { flex: 1; min-width: 0; }
+.nw .badge { white-space: nowrap; max-width: none; }
