@@ -1,6 +1,0 @@
-{
-  "name": "renewalwatch",
-  "private": true,
-  "type": "module",
-  "engines": { "node": "22.x" }
-}
