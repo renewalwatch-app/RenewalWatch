@@ -550,7 +550,7 @@ async function checkNow(btn) {
     if (!res.ok) throw new Error(out.error || 'The check failed. Try again in a minute.');
     form.expiry_date.value = out.date;
     const filled = [];
-    for (const [key, label] of [['registrar', 'registrar'], ['issuer', 'issuer']]) {
+    for (const [key, label] of [['issuer', 'issuer']]) {
       const input = form.querySelector(`[name="d_${key}"]`);
       if (input && out[key] && !input.value.trim()) { input.value = out[key]; filled.push(`${label}: ${out[key]}`); }
     }
@@ -1180,10 +1180,15 @@ async function importCsv(file) {
 }
 
 // ---------------- events ----------------
+// Only close a form when the press both starts and ends on the dark background.
+// (Selecting text in a field and letting go outside the form used to close it.)
+let pressedOnBackdrop = false;
+document.addEventListener('mousedown', e => { pressedOnBackdrop = !!e.target.classList?.contains('modal-bg'); });
+
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-action]');
   if (!el) {
-    if (e.target.classList?.contains('modal-bg')) closeModal();
+    if (pressedOnBackdrop && e.target.classList?.contains('modal-bg')) closeModal();
     return;
   }
   const a = el.dataset.action;
