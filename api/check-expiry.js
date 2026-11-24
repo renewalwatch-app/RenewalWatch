@@ -12,8 +12,8 @@ export async function POST(request) {
   if (!['domain', 'ssl'].includes(type) || !host) return json({ error: 'Bad request' }, 400);
 
   try {
-    const { date, registrar = null, issuer = null } = await lookup(type, host);
-    return json({ date, registrar, issuer });
+    const { date, issuer = null } = await lookup(type, host);
+    return json({ date, issuer });
   } catch (err) {
     return json({ error: err.message }, 422);
   }

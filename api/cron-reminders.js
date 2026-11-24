@@ -122,10 +122,9 @@ async function refreshAutoChecks(today) {
       const details = { ...it.details, last_checked: today };
       let patch;
       try {
-        const { date, registrar, issuer } = await lookup(target.type, target.host);
+        const { date, issuer } = await lookup(target.type, target.host);
         delete details.check_error;
-        if (registrar && !details.registrar) details.registrar = registrar;   // fill blanks only, never overwrite
-        if (issuer && !details.issuer) details.issuer = issuer;
+        if (issuer && !details.issuer) details.issuer = issuer;   // fill blanks only, never overwrite
         patch = { expiry_date: date, details };
         if (date !== it.expiry_date) updated++;
       } catch (err) {

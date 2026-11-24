@@ -47,17 +47,10 @@ export async function domainExpiry(input) {
     const data = await res.json();
     const ev = (data.events || []).find(e => /expir/i.test(e.eventAction || ''));
     if (!ev?.eventDate) throw new Error(`The registry for .${tld} doesn't publish expiry dates, so enter this one by hand`);
-    return { date: ev.eventDate.slice(0, 10), registrar: registrarName(data) };
+    return { date: ev.eventDate.slice(0, 10) };
   }
   if (notFound) throw new Error(`${domain} wasn't found at its registry. Check the spelling.`);
   throw new Error(`Couldn't reach the registry for ${domain} (${lastStatus}). Try again later, or enter the date by hand.`);
-}
-
-// The registrar's name, from the "registrar" entity's contact card (vCard "fn" field).
-function registrarName(data) {
-  const ent = (data.entities || []).find(e => (e.roles || []).includes('registrar'));
-  const fn = ent?.vcardArray?.[1]?.find(v => v[0] === 'fn')?.[3];
-  return typeof fn === 'string' && fn.trim() ? fn.trim().slice(0, 120) : null;
 }
 
 export function sslExpiry(input) {
