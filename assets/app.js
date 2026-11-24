@@ -549,7 +549,12 @@ async function checkNow(btn) {
     const out = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(out.error || 'The check failed. Try again in a minute.');
     form.expiry_date.value = out.date;
-    status.innerHTML = `<span class="badge b-green">Found: ${esc(fmtDate(out.date))}</span> Click Save to keep it.`;
+    const filled = [];
+    for (const [key, label] of [['registrar', 'registrar'], ['issuer', 'issuer']]) {
+      const input = form.querySelector(`[name="d_${key}"]`);
+      if (input && out[key] && !input.value.trim()) { input.value = out[key]; filled.push(`${label}: ${out[key]}`); }
+    }
+    status.innerHTML = `<span class="badge b-green">Found: ${esc(fmtDate(out.date))}</span>${filled.length ? ` Also filled in ${esc(filled.join(', '))}.` : ''} Click Save to keep it.`;
   } catch (err) {
     status.innerHTML = `<span class="badge b-red">${esc(err.message)}</span>`;
   }
