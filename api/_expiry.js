@@ -10,20 +10,47 @@ export function cleanHost(v) {
     .replace(/\.$/, '');
 }
 
+const UA = 'RenewalWatch/1.0 (+https://renewalwatch.ca)';
+const RDAP_HEADERS = { accept: 'application/rdap+json, application/json', 'user-agent': UA };
+let bootstrap = null; // IANA's list of which server answers for each extension, cached while the function stays warm
+
+async function registryServers(tld) {
+  if (!bootstrap) {
+    const res = await fetch('https://data.iana.org/rdap/dns.json', { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`IANA lookup failed (${res.status})`);
+    bootstrap = await res.json();
+  }
+  const hit = (bootstrap.services || []).find(([tlds]) => tlds.includes(tld));
+  return hit ? hit[1] : [];
+}
+
+async function rdapGet(url) {
+  return fetch(url, { headers: RDAP_HEADERS, redirect: 'follow', signal: AbortSignal.timeout(10000) });
+}
+
 export async function domainExpiry(input) {
   const domain = cleanHost(input).replace(/^www\./, '');
   if (!HOST_RE.test(domain)) throw new Error(`"${input}" doesn't look like a domain name`);
-  const res = await fetch(`https://rdap.org/domain/${domain}`, {
-    headers: { accept: 'application/rdap+json, application/json' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(10000),
-  });
-  if (res.status === 404) throw new Error(`${domain} wasn't found at its registry`);
-  if (!res.ok) throw new Error(`Registry lookup for ${domain} failed (error ${res.status})`);
-  const data = await res.json();
-  const ev = (data.events || []).find(e => /expir/i.test(e.eventAction || ''));
-  if (!ev?.eventDate) throw new Error(`The registry for ${domain} doesn't publish an expiry date`);
-  return ev.eventDate.slice(0, 10);
+  const tld = domain.split('.').pop();
+
+  // Ask the registry directly (as listed by IANA); fall back to the rdap.org forwarding service.
+  const urls = [];
+  try { for (const base of await registryServers(tld)) urls.push(`${base.replace(/\/?$/, '/')}domain/${domain}`); } catch { /* use fallback */ }
+  urls.push(`https://rdap.org/domain/${domain}`);
+
+  let lastStatus = null, notFound = false;
+  for (const url of urls) {
+    let res;
+    try { res = await rdapGet(url); } catch { lastStatus = 'timeout'; continue; }
+    if (res.status === 404) { notFound = true; continue; }
+    if (!res.ok) { lastStatus = res.status; continue; }
+    const data = await res.json();
+    const ev = (data.events || []).find(e => /expir/i.test(e.eventAction || ''));
+    if (!ev?.eventDate) throw new Error(`The registry for .${tld} doesn't publish expiry dates, so enter this one by hand`);
+    return ev.eventDate.slice(0, 10);
+  }
+  if (notFound) throw new Error(`${domain} wasn't found at its registry. Check the spelling.`);
+  throw new Error(`Couldn't reach the registry for ${domain} (${lastStatus}). Try again later, or enter the date by hand.`);
 }
 
 export function sslExpiry(input) {
