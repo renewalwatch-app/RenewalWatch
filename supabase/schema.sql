@@ -201,3 +201,103 @@ end;
 $$;
 
 grant execute on function public.accept_invites() to authenticated;
+
+-- ============ TABLE ACCESS ============
+-- Newer Supabase projects don't grant table access automatically, so grant it explicitly.
+-- Row level security above still limits each user to their own workspace.
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on public.items to authenticated;
+grant select, delete on public.members to authenticated;
+grant select, insert, delete on public.invites to authenticated;
+grant select on public.workspaces to authenticated;
+grant update (name, reminder_days, notify_emails) on public.workspaces to authenticated;
+grant all on public.workspaces, public.members, public.invites, public.items to service_role;
+grant execute on function public.is_member(uuid), public.is_owner(uuid), public.workspace_plan(uuid), public.accept_invites() to authenticated, service_role;
+
+-- ============ CALENDAR AND ATTACHMENTS ============
+-- Calendar: a secret link per workspace
+alter table public.workspaces add column if not exists calendar_token uuid not null default gen_random_uuid();
+create unique index if not exists workspaces_calendar_token_idx on public.workspaces (calendar_token);
+grant update (name, reminder_days, notify_emails, calendar_token) on public.workspaces to authenticated;
+
+-- Attachments: private storage, files saved as <workspace id>/<item id>/<file name>
+create or replace function public.path_workspace(p text) returns uuid
+language plpgsql immutable as $$
+begin
+  return split_part(p, '/', 1)::uuid;
+exception when others then
+  return null;
+end;
+$$;
+grant execute on function public.path_workspace(text) to authenticated, service_role;
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('attachments', 'attachments', false, 10485760)
+on conflict (id) do update set public = false, file_size_limit = 10485760;
+
+drop policy if exists rw_attach_select on storage.objects;
+create policy rw_attach_select on storage.objects for select to authenticated
+  using (bucket_id = 'attachments' and public.is_member(public.path_workspace(name)));
+
+drop policy if exists rw_attach_insert on storage.objects;
+create policy rw_attach_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'attachments'
+    and public.is_member(public.path_workspace(name))
+    and public.workspace_plan(public.path_workspace(name)) = 'pro');
+
+drop policy if exists rw_attach_delete on storage.objects;
+create policy rw_attach_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'attachments' and public.is_member(public.path_workspace(name)));
+
+-- ============ HISTORY AND VALUE ============
+-- Useful life in years, for working out current value
+alter table public.items add column if not exists useful_life_years int check (useful_life_years between 1 and 30);
+
+-- History of who had each item, status and location changes
+create table if not exists public.item_events (
+  id bigint generated always as identity primary key,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  item_id uuid not null references public.items(id) on delete cascade,
+  kind text not null check (kind in ('created', 'assigned', 'status', 'location')),
+  from_value text,
+  to_value text,
+  actor text,
+  created_at timestamptz not null default now()
+);
+create index if not exists item_events_item_idx on public.item_events (item_id, created_at desc);
+
+alter table public.item_events enable row level security;
+drop policy if exists events_select on public.item_events;
+create policy events_select on public.item_events for select using (public.is_member(workspace_id));
+revoke insert, update, delete on public.item_events from anon, authenticated;
+grant select on public.item_events to authenticated;
+grant all on public.item_events to service_role;
+
+create or replace function public.log_item_events() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare who text := coalesce(auth.jwt() ->> 'email', 'RenewalWatch');
+begin
+  if tg_op = 'INSERT' then
+    insert into item_events (workspace_id, item_id, kind, to_value, actor)
+      values (new.workspace_id, new.id, 'created', new.assigned_to, who);
+    return new;
+  end if;
+  if lower(coalesce(trim(new.assigned_to), '')) is distinct from lower(coalesce(trim(old.assigned_to), '')) then
+    insert into item_events (workspace_id, item_id, kind, from_value, to_value, actor)
+      values (new.workspace_id, new.id, 'assigned', old.assigned_to, new.assigned_to, who);
+  end if;
+  if new.status is distinct from old.status then
+    insert into item_events (workspace_id, item_id, kind, from_value, to_value, actor)
+      values (new.workspace_id, new.id, 'status', old.status, new.status, who);
+  end if;
+  if lower(coalesce(trim(new.location), '')) is distinct from lower(coalesce(trim(old.location), '')) then
+    insert into item_events (workspace_id, item_id, kind, from_value, to_value, actor)
+      values (new.workspace_id, new.id, 'location', old.location, new.location, who);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists items_history on public.items;
+create trigger items_history after insert or update on public.items
+  for each row execute function public.log_item_events();

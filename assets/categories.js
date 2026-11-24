@@ -1,7 +1,7 @@
 // Shared by the browser app and the server functions.
 export const FREE_ITEM_LIMIT = 25;
 
-// Field types: text, number, date, select (with options), url
+// Field types: text, number, date, select (with options), url, checkbox
 const f = (k, label, type = 'text', extra = {}) => ({ k, label, type, ...extra });
 
 export const GROUPS = [
@@ -67,9 +67,11 @@ export const CATEGORIES = [
 
   // ---------- PRO: internet-facing ----------
   { id: 'domain', label: 'Domain name', group: 'Internet-facing', tier: 'pro', dateLabel: 'Expires',
-    fields: [f('registrar', 'Registrar'), f('dns_host', 'DNS host'), f('registrant', 'Registrant account')] },
+    fields: [f('auto_check', 'Look up the expiry date automatically every day', 'checkbox'), f('domain_name', 'Domain to check (e.g. company.ca)'),
+      f('registrar', 'Registrar'), f('dns_host', 'DNS host'), f('registrant', 'Registrant account')] },
   { id: 'ssl', label: 'SSL / TLS certificate', group: 'Internet-facing', tier: 'pro', dateLabel: 'Expires',
-    fields: [f('common_name', 'Common name'), f('sans', 'Other names (SANs)'), f('issuer', 'Issuer'), f('installed_on', 'Installed on')] },
+    fields: [f('auto_check', 'Check the certificate automatically every day', 'checkbox'), f('check_host', 'Website to check (e.g. www.company.ca)'),
+      f('common_name', 'Common name'), f('sans', 'Other names (SANs)'), f('issuer', 'Issuer'), f('installed_on', 'Installed on')] },
 
   // ---------- PRO: contracts and vendors ----------
   { id: 'support_contract', label: 'Support / maintenance contract', group: 'Contracts & Vendors', tier: 'pro', dateLabel: 'Contract ends',

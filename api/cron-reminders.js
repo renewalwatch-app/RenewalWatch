@@ -1,5 +1,6 @@
 import { CAT, EXTRA_REMINDER_DATES } from '../assets/categories.js';
-import { env, json, supabase } from './_lib.js';
+import { env, json, supabase, fetchAll } from './_lib.js';
+import { checkTarget, lookup } from './_expiry.js';
 
 // Runs once a day (see vercel.json). Emails each workspace a digest of upcoming renewals.
 export async function GET(request) {
@@ -9,10 +10,11 @@ export async function GET(request) {
   }
 
   const today = torontoToday();
+  const checks = await refreshAutoChecks(today);
   const horizon = addDays(today, 400);
   const [workspaces, members, items] = await Promise.all([
     fetchAll('workspaces?select=id,name,plan,reminder_days,notify_emails'),
-    fetchAll('members?select=workspace_id,email'),
+    fetchAll('members?select=workspace_id,email', 'workspace_id,user_id'),
     fetchAll(`items?select=id,workspace_id,name,category,vendor,expiry_date,renewal_cost,auto_renew,details` +
       `&status=neq.retired&or=(expiry_date.lte.${horizon},details->>os_eos.lte.${horizon})`),
   ]);
@@ -28,7 +30,7 @@ export async function GET(request) {
       results.push({ workspace: d.workspaceId, error: String(err.message || err) });
     }
   }
-  return json({ today, digests: results.length, results });
+  return json({ today, checks, digests: results.length, results });
 }
 
 // Pure function so it can be tested without a database.
@@ -106,14 +108,34 @@ async function sendEmail({ workspaceName, to, lines }) {
   if (!res.ok) throw new Error(`Resend failed: ${res.status} ${await res.text()}`);
 }
 
-async function fetchAll(path) {
-  const all = [];
-  const page = 1000;
-  for (let offset = 0; ; offset += page) {
-    const rows = await supabase(`${path}&order=${path.startsWith('members') ? 'workspace_id,user_id' : 'id'}&limit=${page}&offset=${offset}`);
-    all.push(...rows);
-    if (rows.length < page) return all;
-  }
+// Look up fresh expiry dates for domains and SSL certificates set to check automatically.
+async function refreshAutoChecks(today) {
+  const items = await fetchAll('items?select=id,category,name,details,expiry_date&status=neq.retired' +
+    '&category=in.(domain,ssl)&details->>auto_check=eq.true');
+  let updated = 0, failed = 0;
+  const queue = [...items];
+  const worker = async () => {
+    while (queue.length) {
+      const it = queue.shift();
+      const target = checkTarget(it);
+      if (!target) continue;
+      const details = { ...it.details, last_checked: today };
+      let patch;
+      try {
+        const date = await lookup(target.type, target.host);
+        delete details.check_error;
+        patch = { expiry_date: date, details };
+        if (date !== it.expiry_date) updated++;
+      } catch (err) {
+        details.check_error = String(err.message || err).slice(0, 200);
+        patch = { details };
+        failed++;
+      }
+      try { await supabase(`items?id=eq.${it.id}`, { method: 'PATCH', body: patch }); } catch (e) { console.error(e); }
+    }
+  };
+  await Promise.all(Array.from({ length: 5 }, worker));
+  return { checked: items.length, updated, failed };
 }
 
 export function torontoToday() {

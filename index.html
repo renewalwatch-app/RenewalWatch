@@ -72,10 +72,13 @@
       <div class="feature"><div class="ico">💻</div><h3>Hardware and warranties</h3><p>Laptops, desktops, printers, phones and monitors with serials, asset tags, who has them and when coverage ends.</p></div>
       <div class="feature"><div class="ico">🖥️</div><h3>Servers and network</h3><p>Hostnames, IPs, roles, OS end-of-support dates, patch dates, firmware versions and support contracts for servers, VMs, firewalls and switches.</p></div>
       <div class="feature"><div class="ico">🔑</div><h3>Software and SaaS</h3><p>Licenses and subscriptions with seat counts, so you spot unused seats before you pay for them again.</p></div>
-      <div class="feature"><div class="ico">🌐</div><h3>Domains and SSL</h3><p>Expiry dates for domains and certificates, with a warning when something isn't set to auto-renew.</p></div>
+      <div class="feature"><div class="ico">🌐</div><h3>Domains and SSL</h3><p>Enter a domain or website and RenewalWatch looks up the real expiry date and rechecks it every day. No more surprise lapses.</p></div>
       <div class="feature"><div class="ico">📄</div><h3>Contracts and compliance</h3><p>ISP circuits, phone systems, leases, maintenance contracts, cyber insurance and audits.</p></div>
       <div class="feature"><div class="ico">✅</div><h3>Recurring IT tasks</h3><p>Backup restore tests, access reviews, password rotations and battery swaps that repeat on a schedule.</p></div>
-      <div class="feature"><div class="ico">📧</div><h3>Email reminders</h3><p>A digest lands in your inbox before each date, and weekly for anything overdue.</p></div>
+      <div class="feature"><div class="ico">🏷️</div><h3>QR labels and history</h3><p>Print QR stickers for your equipment. Scan one with any phone camera to open the item and see everyone who has had it.</p></div>
+      <div class="feature"><div class="ico">💵</div><h3>Equipment value</h3><p>See what your hardware is worth today and what's reaching the end of its life next year, so replacements are budgeted, not a surprise.</p></div>
+      <div class="feature"><div class="ico">📎</div><h3>Files in one place</h3><p>Attach the invoice, warranty certificate or contract to each item so it's there when you need to make a claim or renew.</p></div>
+      <div class="feature"><div class="ico">📧</div><h3>Email and calendar reminders</h3><p>A digest lands in your inbox before each date, and every renewal can appear in Outlook or Google Calendar automatically.</p></div>
       <div class="feature"><div class="ico">👋</div><h3>Offboarding checklists</h3><p>See everything assigned to a departing employee and print a checklist of licenses to reclaim and gear to collect.</p></div>
       <div class="feature"><div class="ico">📊</div><h3>Spend forecast and health checks</h3><p>See renewal costs by month for the next year, plus unpatched servers, stale firmware and untested backups.</p></div>
     </div>
@@ -96,12 +99,18 @@
         <a class="btn" href="/app" style="width:100%;justify-content:center">Start free</a>
       </div>
       <div class="price-card pro">
-        <h3>Pro</h3><div class="price"><span id="price-label">$9/month</span></div>
+        <h3>Pro</h3><div class="price"><span id="price-label">$12/month</span></div>
+        <p class="small muted" style="margin:-10px 0 14px">or <span id="price-label-y">$120/year</span>, 2 months free</p>
         <ul>
           <li>Unlimited items</li>
           <li>Servers, VMs, network gear, storage, UPS and backups</li>
           <li>Software licenses, SaaS, security tools and cloud accounts</li>
           <li>Domains, SSL certificates, contracts, ISP and compliance</li>
+          <li>Automatic domain and SSL expiry lookups</li>
+          <li>Calendar feed for Outlook, Google and iPhone</li>
+          <li>File attachments for invoices, warranties and contracts</li>
+          <li>QR labels for equipment, plus a history of who had each item</li>
+          <li>Equipment value and replacement planning</li>
           <li>Recurring IT tasks</li>
           <li>Custom reminder schedule and extra recipients</li>
           <li>Team members</li>
@@ -127,8 +136,12 @@
     © <span id="yr"></span> RenewalWatch · Made in Canada 🇨🇦 · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
   </footer>
   <script>
+    if (/access_token|type=recovery|error_description/.test(location.hash)) location.replace('/app' + location.hash);
     document.getElementById('yr').textContent = new Date().getFullYear();
-    fetch('/api/config').then(r => r.json()).then(c => { if (c.priceLabel) document.getElementById('price-label').textContent = c.priceLabel; }).catch(() => {});
+    fetch('/api/config').then(r => r.json()).then(c => {
+      if (c.priceLabel) document.getElementById('price-label').textContent = c.priceLabel;
+      if (c.priceLabelYearly) document.getElementById('price-label-y').textContent = c.priceLabelYearly;
+    }).catch(() => {});
   </script>
 </body>
 </html>

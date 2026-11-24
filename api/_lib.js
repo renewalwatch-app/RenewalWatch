@@ -27,3 +27,13 @@ export function json(data, status = 200) {
 }
 
 export const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+// Fetch every row of a REST query, 1000 at a time.
+export async function fetchAll(path, order = 'id') {
+  const all = [];
+  for (let offset = 0; ; offset += 1000) {
+    const rows = await supabase(`${path}&order=${order}&limit=1000&offset=${offset}`);
+    all.push(...rows);
+    if (rows.length < 1000) return all;
+  }
+}

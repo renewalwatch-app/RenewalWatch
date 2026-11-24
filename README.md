@@ -44,11 +44,11 @@ renewalwatch.ca was available on Nov 20, 2026. Buy it at Namecheap. Every other 
 
 Do this in Test mode first. Repeat it in Live mode when you're ready to charge.
 
-1. Under Product catalog, add a product named "RenewalWatch Pro" with a recurring price of $9 CAD per month. You can add a yearly price too.
-2. Create a Payment Link for that price. Under "After payment", choose "Don't show confirmation page" and redirect to `https://renewalwatch.ca/app?upgraded=1`. Copy the link; it goes in `STRIPE_PAYMENT_LINK`.
+1. Under Product catalog, add a product named "RenewalWatch Pro" with two recurring prices: $12 CAD per month and $120 CAD per year.
+2. Create one Payment Link for the monthly price and another for the yearly price. Under "After payment", choose "Don't show confirmation page" and redirect to `https://www.renewalwatch.ca/app?upgraded=1`. The monthly link goes in `STRIPE_PAYMENT_LINK` and the yearly link goes in `STRIPE_PAYMENT_LINK_YEARLY`.
 3. Go to Settings, then Billing, then Customer portal. Activate it, allow cancelling and updating the payment method, and copy the login link. It goes in `STRIPE_PORTAL_LINK`.
 4. Go to Developers, then Webhooks, and add an endpoint:
-   1. URL: `https://renewalwatch.ca/api/stripe-webhook`
+   1. URL: `https://www.renewalwatch.ca/api/stripe-webhook`
    2. Events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`
    3. Copy the signing secret (it starts with `whsec_`). It goes in `STRIPE_WEBHOOK_SECRET`.
 
@@ -62,14 +62,16 @@ Do this in Test mode first. Repeat it in Live mode when you're ready to charge.
 | SUPABASE_URL | from step 3 |
 | SUPABASE_ANON_KEY | from step 3 |
 | SUPABASE_SERVICE_KEY | from step 3 (secret) |
-| STRIPE_PAYMENT_LINK | from step 5 |
+| STRIPE_PAYMENT_LINK | from step 5 (monthly) |
+| STRIPE_PAYMENT_LINK_YEARLY | from step 5 (yearly) |
 | STRIPE_PORTAL_LINK | from step 5 |
 | STRIPE_WEBHOOK_SECRET | from step 5 (secret) |
 | RESEND_API_KEY | from step 4 (secret) |
 | REMINDER_FROM | `RenewalWatch <reminders@renewalwatch.ca>` |
 | APP_URL | `https://renewalwatch.ca` |
 | CRON_SECRET | any random string of 32 or more characters (secret) |
-| PRICE_LABEL | `$9/month` |
+| PRICE_LABEL | `$12/month` |
+| PRICE_LABEL_YEARLY | `$120/year` |
 
 3. Deploy.
 4. Go to Settings, then Domains, and add `renewalwatch.ca`. Vercel shows DNS records to add in Namecheap.
@@ -113,6 +115,11 @@ The Pro plan adds:
 11. Health checks for unpatched servers, OS end of support, stale firmware, untested backups, UPS self-tests, 5-year-old laptops, and domains or SSL certificates that won't auto-renew.
 12. A People view with printable offboarding checklists.
 13. CSV import.
+14. Automatic domain and SSL expiry lookups, refreshed daily.
+15. A calendar subscription link for Outlook, Google Calendar and iPhone.
+16. File attachments on each item, up to 10 MB per file.
+17. QR labels (30 per sheet, Avery 5160) that open the item when scanned, plus a history of assignment, status and location changes.
+18. Equipment value (straight-line depreciation) and a 12-month replacement list.
 
 ## Files
 

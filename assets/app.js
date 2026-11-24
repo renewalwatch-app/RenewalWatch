@@ -1,10 +1,12 @@
 import { CATEGORIES, CAT, GROUPS, FREE_ITEM_LIMIT, isFreeCategory, STATUSES, BILLING, EXTRA_REMINDER_DATES } from './categories.js';
+import { qrSvg } from './qrcode.js';
 
 const SUPABASE_CDN = 'https://esm.sh/@supabase/supabase-js@2';
 const state = {
   cfg: null, sb: null, session: null, recovery: false,
   workspaces: [], ws: null, items: [], members: [], invites: [],
-  view: 'dashboard', filters: { q: '', group: '', location: '', status: 'open' }, peopleQ: '',
+  view: 'dashboard', filters: { q: '', group: '', location: '', status: 'open' },
+  people: { q: '', location: '', group: '', sort: 'name', open: new Set() },
 };
 const root = document.getElementById('app');
 
@@ -70,6 +72,18 @@ function keyDates(item) {
     if (d) out.push({ item, label: x.label, date: d, left: daysLeft(d) });
   }
   return out;
+}
+
+// ---------------- equipment value (straight-line depreciation) ----------------
+const DEPRECIABLE_GROUPS = ['Hardware', 'Servers & Infrastructure'];
+const DEFAULT_LIFE = { computer: 4, mobile: 3, peripheral: 5, printer: 5, other_hw: 5, server: 5, network: 5, storage: 5, ups: 5 };
+const isDepreciable = i => DEPRECIABLE_GROUPS.includes(CAT[i.category]?.group) && i.category !== 'warranty' && i.category !== 'backup' && i.category !== 'vm';
+const usefulLife = i => i.useful_life_years || DEFAULT_LIFE[i.category] || 5;
+function bookValue(i) {
+  if (!isDepreciable(i) || !i.cost || !i.purchase_date) return null;
+  const life = usefulLife(i), years = Math.max(0, daysBetween(i.purchase_date, todayStr()) / 365.25);
+  const value = Math.max(0, Number(i.cost) * (1 - years / life));
+  return { value, cost: Number(i.cost), life, years, used: Math.min(1, years / life), endDate: addMonths(i.purchase_date, Math.round(life * 12)) };
 }
 
 // ---------------- boot and auth ----------------
@@ -171,8 +185,7 @@ async function loadAll() {
   const saved = lsGet('rw_ws');
   state.ws = wss.find(w => w.id === saved) || wss[0];
   await loadWorkspace();
-  state.view = (location.hash.replace('#', '') || 'dashboard');
-  render();
+  route();
   handleUpgradeReturn();
 }
 
@@ -242,17 +255,34 @@ function render() {
     <main>${views[state.view]()}</main>`;
 }
 
+// #item/<id> comes from scanning a QR label: open that item on the Inventory page.
+function route() {
+  const h = location.hash.replace('#', '') || 'dashboard';
+  if (h.startsWith('item/')) {
+    const it = state.items.find(i => i.id === h.slice(5));
+    state.view = 'inventory';
+    history.replaceState(null, '', location.pathname + location.search + '#inventory');
+    render();
+    if (it) openItemModal(it);
+    else toast('That item isn\'t in this workspace. If you belong to more than one, switch workspace in Settings.', true);
+    return;
+  }
+  state.view = h;
+  render();
+}
+
 window.addEventListener('hashchange', () => {
   if (!state.ws) return;
-  state.view = location.hash.replace('#', '') || 'dashboard';
-  render();
+  closeModal();
+  route();
   window.scrollTo(0, 0);
 });
 
 function upsell(title, points) {
   return `<div class="card locked"><h2>🔒 ${esc(title)}</h2>
     <ul>${points.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-    <button class="btn primary" data-action="upgrade">Upgrade to Pro · ${esc(state.cfg.priceLabel)}</button></div>`;
+    <span class="chip-row"><button class="btn primary" data-action="upgrade" data-period="monthly">Upgrade to Pro · ${esc(state.cfg.priceLabel)}</button>
+    <button class="btn" data-action="upgrade" data-period="yearly">${esc(state.cfg.priceLabelYearly)} · 2 months free</button></span></div>`;
 }
 
 // ---------------- dashboard ----------------
@@ -298,12 +328,14 @@ function viewDashboard() {
       </table></div>` : '<p class="muted">Nothing due in the next 90 days. 🎉</p>'}
       ${noDate ? `<p class="small muted" style="margin-top:10px">${noDate} item${noDate === 1 ? ' has' : 's have'} no date set, so ${noDate === 1 ? 'it' : 'they'} won't trigger reminders.</p>` : ''}
     </div>
-    ${isPro() ? `<div class="cols">${spendCard(open)}${licenseCard(open)}</div>${healthCard(open)}`
+    ${isPro() ? `<div class="cols">${spendCard(open)}${licenseCard(open)}</div>${valueCard(open)}${healthCard(open)}`
       : upsell('Pro insights', [
         'Renewal spend forecast for the next 12 months',
         'License check: unused and over-allocated seats, with wasted dollars',
         'Health checks: unpatched servers, OS end of support, stale firmware, untested backups, aging laptops',
         'Servers, VMs, network gear, software, SaaS, domains, SSL, contracts and recurring IT tasks',
+        'Automatic domain and SSL expiry lookups, a calendar feed for Outlook or Google, and file attachments',
+        'QR labels for your equipment, a history of who had each item, and what your equipment is worth today',
         'Unlimited items, team members, custom reminder schedules, offboarding checklists, CSV import',
       ])}`;
 }
@@ -351,6 +383,26 @@ function licenseCard(open) {
   </div>`;
 }
 
+function valueCard(open) {
+  const rows = open.map(i => ({ i, bv: bookValue(i) })).filter(r => r.bv);
+  const missing = open.filter(i => isDepreciable(i) && (!i.cost || !i.purchase_date)).length;
+  if (!rows.length) return `<div class="card"><h2>Equipment value</h2><p class="muted">Add a purchase date and purchase cost to your hardware to see what it's worth today and what's due for replacement.</p></div>`;
+  const cost = rows.reduce((a, r) => a + r.bv.cost, 0), value = rows.reduce((a, r) => a + r.bv.value, 0);
+  const done = rows.filter(r => r.bv.used >= 1);
+  const next12 = rows.filter(r => r.bv.used < 1 && r.bv.endDate <= addMonths(todayStr(), 12)).sort((a, b) => a.bv.endDate.localeCompare(b.bv.endDate));
+  return `<div class="card"><h2>Equipment value</h2>
+    <div class="stats" style="margin-bottom:12px">
+      <div class="stat"><div class="num" style="font-size:22px">${money(Math.round(value))}</div><div class="lbl">Current value</div></div>
+      <div class="stat"><div class="num" style="font-size:22px">${money(Math.round(cost))}</div><div class="lbl">Original cost</div></div>
+      <div class="stat"><div class="num" style="font-size:22px">${done.length}</div><div class="lbl">Past useful life</div></div>
+      <div class="stat"><div class="num" style="font-size:22px">${next12.length}</div><div class="lbl">Reach end of life in 12 months</div></div>
+    </div>
+    ${next12.length ? `<p class="small" style="margin:0 0 6px"><strong>Plan to replace in the next 12 months</strong> · about ${money(Math.round(next12.reduce((a, r) => a + r.bv.cost, 0)))} at original prices</p>
+      <ul class="list-plain">${next12.slice(0, 8).map(r => `<li><a href="#" data-action="edit-item" data-id="${r.i.id}">${esc(r.i.name)}</a><span class="sub">${fmtDate(r.bv.endDate)}</span></li>`).join('')}</ul>` : ''}
+    <p class="small muted" style="margin-bottom:0">Straight-line value over each item's useful life${missing ? `. ${missing} hardware item${missing === 1 ? ' is' : 's are'} missing a purchase date or cost` : ''}.</p>
+  </div>`;
+}
+
 function healthCard(open) {
   const t = todayStr(), checks = [];
   const age = d => d ? daysBetween(d, t) : null;
@@ -384,6 +436,9 @@ function healthCard(open) {
       checks.push([i, 'Expiring soon and not set to auto-renew', 'red']);
     }
   }
+  for (const i of open) {
+    if (i.details?.auto_check && i.details?.check_error) checks.push([i, `Automatic check failed: ${i.details.check_error}`, 'amber']);
+  }
   const order = { red: 0, amber: 1, gray: 2 };
   checks.sort((a, b) => order[a[2]] - order[b[2]]);
   return `<div class="card"><h2>Health checks</h2>
@@ -403,7 +458,7 @@ function filteredItems() {
     if (status === 'open' && i.status === 'retired') return false;
     if (status && status !== 'open' && i.status !== status) return false;
     if (group && CAT[i.category]?.group !== group) return false;
-    if (loc && (i.location || '') !== loc) return false;
+    if (loc && nameKey(i.location) !== nameKey(loc)) return false;
     if (needle) {
       const hay = [i.name, i.vendor, i.model, i.serial, i.asset_tag, i.assigned_to, i.location, i.notes, CAT[i.category]?.label,
         ...Object.values(i.details || {})].join(' ').toLowerCase();
@@ -414,11 +469,12 @@ function filteredItems() {
 }
 
 function viewInventory() {
-  const locations = [...new Set(state.items.map(i => i.location).filter(Boolean))].sort();
+  const locations = [...canonicalNames('location').values()].sort();
   const f = state.filters;
   return `
     <div class="page-head"><h1>Inventory</h1>
-      <div class="chip-row"><button class="btn" data-action="export-csv">Export CSV</button><button class="btn primary" data-action="new-item">+ Add item</button></div></div>
+      <div class="chip-row">${isPro() ? '<button class="btn" data-action="print-labels" title="Prints a QR label for every item in the list below">Print QR labels</button>' : ''}<button class="btn" data-action="export-csv">Export CSV</button><button class="btn primary" data-action="new-item">+ Add item</button></div></div>
+    ${isPro() ? '<p class="small muted" style="margin:-8px 0 12px">QR labels print for the items currently shown. Use 30-per-sheet address labels (Avery 5160 or similar) and print at 100% / actual size.</p>' : ''}
     <div class="filters">
       <input id="f-q" placeholder="Search name, serial, person, IP…" value="${esc(f.q)}">
       <select id="f-group"><option value="">All categories</option>${GROUPS.map(g => `<option ${f.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
@@ -458,18 +514,53 @@ function detailFieldsHtml(catId, details) {
   if (!cat?.fields.length) return '';
   return `<div class="section-title">${esc(cat.label)} details</div><div class="grid2">${cat.fields.map(fd => {
     const v = details?.[fd.k] ?? '';
+    if (fd.type === 'checkbox') return `<div class="field" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;font-weight:500">
+      <input type="checkbox" name="d_${fd.k}" ${v ? 'checked' : ''}> ${esc(fd.label)}</label></div>`;
     const input = fd.type === 'select'
       ? `<select name="d_${fd.k}"><option value=""></option>${fd.options.map(o => `<option ${v === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
       : `<input name="d_${fd.k}" type="${fd.type === 'url' ? 'url' : fd.type}" ${fd.type === 'number' ? 'step="any"' : ''} value="${esc(v)}">`;
     return `<div class="field"><label>${esc(fd.label)}</label>${input}</div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>${['domain', 'ssl'].includes(catId) ? checkRowHtml(details) : ''}`;
+}
+
+function checkRowHtml(details = {}) {
+  const status = details.check_error
+    ? `<span class="badge b-red">Last automatic check failed: ${esc(details.check_error)}</span>`
+    : details.last_checked ? `<span class="muted">Last checked automatically ${esc(fmtDate(details.last_checked))}</span>` : '';
+  return `<div class="field chip-row" style="align-items:center"><button type="button" class="btn small" data-action="check-now">Look up expiry date now</button>
+    <span id="check-status" class="small">${status}</span></div>`;
+}
+
+async function checkNow(btn) {
+  const form = document.getElementById('item-form');
+  const type = form.category.value, d = readDetails(form);
+  const host = (type === 'domain' ? d.domain_name : d.check_host || d.common_name) || form.name.value;
+  const status = document.getElementById('check-status');
+  if (!host.trim()) return toast('Enter the domain or website to check first', true);
+  btn.disabled = true;
+  status.textContent = 'Checking…';
+  try {
+    const { data: { session } } = await state.sb.auth.getSession();
+    const res = await fetch('/api/check-expiry', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session?.access_token || ''}` },
+      body: JSON.stringify({ type, host }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || 'The check failed. Try again in a minute.');
+    form.expiry_date.value = out.date;
+    status.innerHTML = `<span class="badge b-green">Found: ${esc(fmtDate(out.date))}</span> Click Save to keep it.`;
+  } catch (err) {
+    status.innerHTML = `<span class="badge b-red">${esc(err.message)}</span>`;
+  }
+  btn.disabled = false;
 }
 
 function openItemModal(item = null) {
   const it = item || { category: 'computer', status: 'active', details: {} };
   const pro = isPro();
-  const people = [...new Set(state.items.map(i => i.assigned_to).filter(Boolean))].sort();
-  const locations = [...new Set(state.items.map(i => i.location).filter(Boolean))].sort();
+  const people = [...canonicalNames('assigned_to').values()].sort();
+  const locations = [...canonicalNames('location').values()].sort();
   const catOptions = GROUPS.map(g => `<optgroup label="${esc(g)}">${CATEGORIES.filter(c => c.group === g).map(c => {
     const locked = !pro && !isFreeCategory(c.id) && c.id !== it.category;
     return `<option value="${c.id}" ${c.id === it.category ? 'selected' : ''} ${locked ? 'disabled' : ''}>${esc(c.label)}${!isFreeCategory(c.id) && !pro ? ' (Pro)' : ''}</option>`;
@@ -506,7 +597,10 @@ function openItemModal(item = null) {
         <div class="field"><label>Purchase date</label><input name="purchase_date" type="date" value="${v('purchase_date')}"></div>
         <div class="field"><label>Purchase cost ($)</label><input name="cost" type="number" step="0.01" min="0" value="${v('cost')}"></div>
         <div class="field"><label>Repeats every (months)</label><input name="recur_months" type="number" min="1" max="120" value="${v('recur_months')}" placeholder="Blank = doesn't repeat"></div>
+        <div class="field" id="life-field" ${isDepreciable(it) ? '' : 'hidden'}><label>Useful life (years)</label>
+          <input name="useful_life_years" type="number" min="1" max="30" value="${v('useful_life_years')}" placeholder="Default ${DEFAULT_LIFE[it.category] || 5}"></div>
       </div>
+      ${pro && item ? valueLineHtml(item) : ''}
       <div class="grid2">
         <div class="field"><label>Status</label><select name="status">${STATUSES.map(s => `<option value="${s.id}" ${it.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select></div>
         <div class="field" style="padding-top:26px"><label style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" name="auto_renew" ${it.auto_renew ? 'checked' : ''}> Auto-renews</label></div>
@@ -516,6 +610,17 @@ function openItemModal(item = null) {
       <div id="details-fields">${detailFieldsHtml(it.category, it.details)}</div>
 
       <div class="field" style="margin-top:12px"><label>Notes</label><textarea name="notes">${v('notes')}</textarea></div>
+      ${item ? `<div class="section-title">History and label</div>
+        ${pro ? `<div id="history-list"><p class="small muted">Loading history…</p></div>
+          <p style="margin:8px 0 0"><button type="button" class="btn small" data-action="print-label" data-id="${item.id}">Print QR label</button>
+          <span class="small muted">Stick it on the device. Scanning it with a phone camera opens this item.</span></p>`
+          : '<p class="small muted">See who had this item before and print QR labels with Pro.</p>'}` : ''}
+      <div class="section-title">Files</div>
+      ${!pro ? '<p class="small muted">Attach invoices, warranty certificates and contracts with Pro.</p>'
+        : !item ? '<p class="small muted">Save this item first, then you can attach invoices, warranties and contracts.</p>'
+        : `<div id="attach-list"><p class="small muted">Loading files…</p></div>
+           <label class="btn small" style="margin-top:6px">+ Attach file<input type="file" id="attach-input" hidden></label>
+           <span class="small muted">PDFs, images or documents, up to 10 MB each.</span>`}
       <div class="note">Don't store passwords or license keys here. Keep those in a password manager and note where they're kept.</div>
       <div class="modal-foot">
         <div>${item ? '<button type="button" class="btn danger" data-action="delete-item">Delete</button>' : ''}</div>
@@ -531,19 +636,131 @@ function openItemModal(item = null) {
     const newCat = CAT[form.category.value];
     wrap.querySelector('#details-fields').innerHTML = detailFieldsHtml(newCat.id, current);
     wrap.querySelector('#date-label').textContent = newCat.dateLabel;
+    const lifeField = wrap.querySelector('#life-field');
+    lifeField.hidden = !isDepreciable({ category: newCat.id });
+    form.useful_life_years.placeholder = `Default ${DEFAULT_LIFE[newCat.id] || 5}`;
   });
   form.addEventListener('submit', e => { e.preventDefault(); saveItem(form, item); });
   form.name.focus();
+  if (item && pro) { loadAttachments(item.id); loadHistory(item.id); }
+}
+
+function valueLineHtml(item) {
+  const bv = bookValue(item);
+  if (!bv) return '';
+  const pct = Math.round(bv.used * 100);
+  return `<p class="small" style="margin:-4px 0 8px"><strong>Current value: ${money(Math.round(bv.value))}</strong>
+    <span class="muted">· bought for ${money(bv.cost)} · ${pct}% of its ${bv.life}-year useful life used${bv.used >= 1 ? ' · fully depreciated' : ` · reaches end of life ${fmtDate(bv.endDate)}`}</span></p>`;
+}
+
+// ---------------- history ----------------
+const statusLabel = id => STATUSES.find(s => s.id === id)?.label || id || 'none';
+async function loadHistory(itemId) {
+  const box = document.getElementById('history-list');
+  if (!box) return;
+  const { data, error } = await state.sb.from('item_events').select('*').eq('item_id', itemId).order('created_at', { ascending: false }).limit(50);
+  if (error) { box.innerHTML = '<p class="small muted">History needs the latest database update.</p>'; return; }
+  if (!data.length) { box.innerHTML = '<p class="small muted">No changes recorded yet. Changes to who has it, its status or its location will show here.</p>'; return; }
+  const line = e => {
+    if (e.kind === 'created') return `Added${e.to_value ? `, assigned to <strong>${esc(e.to_value)}</strong>` : ''}`;
+    if (e.kind === 'assigned') return e.to_value
+      ? `Assigned to <strong>${esc(e.to_value)}</strong>${e.from_value ? ` <span class="muted">(was ${esc(e.from_value)})</span>` : ''}`
+      : `Unassigned <span class="muted">(was ${esc(e.from_value)})</span>`;
+    if (e.kind === 'status') return `Status: ${esc(statusLabel(e.from_value))} → <strong>${esc(statusLabel(e.to_value))}</strong>`;
+    return `Location: ${esc(e.from_value || 'none')} → <strong>${esc(e.to_value || 'none')}</strong>`;
+  };
+  box.innerHTML = `<ul class="list-plain">${data.map(e => `<li><span>${line(e)}<div class="sub">${esc(e.actor || '')}</div></span>
+    <span class="sub" style="white-space:nowrap">${new Date(e.created_at).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}</span></li>`).join('')}</ul>`;
+}
+
+// ---------------- QR labels ----------------
+const itemUrl = id => `${location.origin}/app#item/${id}`;
+function labelHtml(i) {
+  const ident = i.asset_tag ? `Tag ${i.asset_tag}` : i.serial ? `S/N ${i.serial}` : (CAT[i.category]?.label || '');
+  return `<div class="label">${qrSvg(itemUrl(i.id), { margin: 1 })}
+    <div class="label-text"><div class="label-name">${esc(i.name)}</div><div>${esc(ident)}</div>
+    <div class="label-co">${esc(state.ws.name)} · Scan for details</div></div></div>`;
+}
+function printLabels(items) {
+  if (!items.length) return toast('No items to print labels for', true);
+  if (items.length > 300 && !confirm(`Print ${items.length} labels? That's ${Math.ceil(items.length / 30)} sheets.`)) return;
+  const sheets = [];
+  for (let i = 0; i < items.length; i += 30) sheets.push(`<div class="sheet">${items.slice(i, i + 30).map(labelHtml).join('')}</div>`);
+  printArea(sheets.join(''), 'labels');
+}
+function printArea(html, cls = '') {
+  let area = document.getElementById('print-area');
+  if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
+  area.className = cls;
+  area.innerHTML = html;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
+// ---------------- attachments ----------------
+const attachDir = itemId => `${state.ws.id}/${itemId}`;
+const fileLabel = name => name.replace(/^\d{13}-/, '');
+const fmtSize = b => !b ? '' : b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`;
+
+async function loadAttachments(itemId) {
+  const box = document.getElementById('attach-list');
+  if (!box) return;
+  const { data, error } = await state.sb.storage.from('attachments').list(attachDir(itemId), { limit: 100, sortBy: { column: 'name', order: 'asc' } });
+  if (error) { box.innerHTML = `<p class="small muted">Couldn't load files: ${esc(error.message)}</p>`; return; }
+  const files = (data || []).filter(f => f.id);
+  box.innerHTML = files.length ? `<ul class="list-plain">${files.map(f => `<li>
+      <span><a href="#" data-action="open-file" data-name="${esc(f.name)}">📄 ${esc(fileLabel(f.name))}</a><div class="sub">${fmtSize(f.metadata?.size)}</div></span>
+      <button type="button" class="btn small danger" data-action="delete-file" data-name="${esc(f.name)}">Remove</button></li>`).join('')}</ul>`
+    : '<p class="small muted">No files attached yet.</p>';
+}
+
+async function uploadAttachment(file) {
+  const itemId = document.querySelector('.modal-bg')?.dataset.id;
+  if (!itemId || !file) return;
+  if (file.size > 10 * 1024 * 1024) return toast('That file is over 10 MB', true);
+  const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
+  toast('Uploading…');
+  const { error } = await state.sb.storage.from('attachments').upload(`${attachDir(itemId)}/${Date.now()}-${safe}`, file, { upsert: false, contentType: file.type || undefined });
+  if (error) return toast(`Upload failed: ${error.message}`, true);
+  toast('File attached');
+  loadAttachments(itemId);
+}
+
+async function openAttachment(name) {
+  const itemId = document.querySelector('.modal-bg')?.dataset.id;
+  const win = window.open('', '_blank');
+  const { data, error } = await state.sb.storage.from('attachments').createSignedUrl(`${attachDir(itemId)}/${name}`, 120);
+  if (error) { win?.close(); return toast(error.message, true); }
+  if (win) win.location = data.signedUrl; else location.href = data.signedUrl;
+}
+
+async function deleteAttachment(name) {
+  const itemId = document.querySelector('.modal-bg')?.dataset.id;
+  if (!confirm(`Remove ${fileLabel(name)}?`)) return;
+  const { error } = await state.sb.storage.from('attachments').remove([`${attachDir(itemId)}/${name}`]);
+  if (error) return toast(error.message, true);
+  loadAttachments(itemId);
+}
+
+async function removeAllAttachments(itemId) {
+  const { data } = await state.sb.storage.from('attachments').list(attachDir(itemId), { limit: 1000 });
+  const paths = (data || []).filter(f => f.id).map(f => `${attachDir(itemId)}/${f.name}`);
+  if (paths.length) await state.sb.storage.from('attachments').remove(paths);
 }
 
 function readDetails(form) {
   const out = {};
   for (const el of form.querySelectorAll('[name^="d_"]')) {
     const k = el.name.slice(2), val = el.value.trim();
+    if (el.type === 'checkbox') { if (el.checked) out[k] = true; continue; }
     if (val !== '') out[k] = el.type === 'number' ? Number(val) : val;
   }
   return out;
 }
+
+const pickKeys = (o, keys) => Object.fromEntries(keys.filter(k => o?.[k] !== undefined).map(k => [k, o[k]]));
 
 function closeModal() { document.querySelector('.modal-bg')?.remove(); }
 
@@ -558,9 +775,12 @@ async function saveItem(form, existing) {
     assigned_to: txt(form.assigned_to.value), location: txt(form.location.value),
     expiry_date: form.expiry_date.value || null, renewal_cost: num(form.renewal_cost.value),
     billing_cycle: form.billing_cycle.value || null, purchase_date: form.purchase_date.value || null, cost: num(form.cost.value),
-    recur_months: num(form.recur_months.value), status: form.status.value, auto_renew: form.auto_renew.checked,
-    notes: txt(form.notes.value), details: readDetails(form),
+    recur_months: num(form.recur_months.value), useful_life_years: isDepreciable({ category: form.category.value }) ? num(form.useful_life_years.value) : null,
+    status: form.status.value, auto_renew: form.auto_renew.checked,
+    notes: txt(form.notes.value),
+    details: { ...pickKeys(existing?.details, ['last_checked', 'check_error']), ...readDetails(form) },
   };
+  snapNames(row, existing?.id);
   const btn = form.querySelector('button.primary');
   btn.disabled = true;
   const q = existing
@@ -581,6 +801,7 @@ async function deleteItem(id) {
   if (!confirm(`Delete "${it?.name}"? This can't be undone. To keep history, set its status to Retired instead.`)) return;
   const { error } = await state.sb.from('items').delete().eq('id', id);
   if (error) return toast(friendlyError(error), true);
+  removeAllAttachments(id).catch(() => {});
   state.items = state.items.filter(i => i.id !== id);
   closeModal();
   toast('Deleted');
@@ -612,15 +833,54 @@ async function markRenewed(id) {
 }
 
 // ---------------- people / offboarding ----------------
-function peopleMap() {
+// Reuse the existing spelling of a person or location, so "jane smith" saves as "Jane Smith".
+function snapNames(row, skipId) {
+  for (const field of ['assigned_to', 'location']) {
+    const v = cleanName(row[field]);
+    if (!v) { row[field] = null; continue; }
+    const match = state.items.find(i => i.id !== skipId && nameKey(i[field]) === v.toLowerCase());
+    row[field] = match ? cleanName(match[field]) : v;
+  }
+}
+// Names and locations match regardless of capitalization or extra spaces.
+const cleanName = v => (v || '').trim().replace(/\s+/g, ' ');
+const nameKey = v => cleanName(v).toLowerCase();
+const isLicense = i => CAT[i.category]?.group === 'Software & Cloud';
+
+// Most common spelling of a name or location across items, so "jane smith" and "Jane Smith" show as one.
+function canonicalNames(field) {
+  const counts = new Map();
+  for (const i of state.items) {
+    const disp = cleanName(i[field]);
+    if (!disp) continue;
+    const k = disp.toLowerCase();
+    if (!counts.has(k)) counts.set(k, {});
+    counts.get(k)[disp] = (counts.get(k)[disp] || 0) + 1;
+  }
+  const out = new Map();
+  for (const [k, spellings] of counts) out.set(k, Object.entries(spellings).sort((a, b) => b[1] - a[1])[0][0]);
+  return out;
+}
+
+function peopleList() {
+  const names = canonicalNames('assigned_to'), locs = canonicalNames('location');
   const map = new Map();
   for (const i of openItems()) {
-    const p = (i.assigned_to || '').trim();
-    if (!p) continue;
-    if (!map.has(p)) map.set(p, []);
-    map.get(p).push(i);
+    const k = nameKey(i.assigned_to);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(i);
   }
-  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return [...map.entries()].map(([key, items]) => {
+    const dates = items.flatMap(keyDates).sort((a, b) => a.left - b.left);
+    return {
+      key, name: names.get(key), items,
+      locations: [...new Set(items.map(i => locs.get(nameKey(i.location))).filter(Boolean))].sort(),
+      groups: new Set(items.map(i => CAT[i.category]?.group)),
+      lic: items.filter(isLicense).length, hw: items.filter(i => !isLicense(i)).length,
+      next: dates[0] || null,
+    };
+  });
 }
 
 function viewPeople() {
@@ -629,25 +889,67 @@ function viewPeople() {
     'One-click printable offboarding checklist: accounts to disable, licenses to reclaim, hardware to collect',
     'Never pay for a departed employee\'s license again',
   ]);
-  const needle = state.peopleQ.toLowerCase();
-  const people = peopleMap().filter(([p]) => p.toLowerCase().includes(needle));
-  return `<div class="page-head"><h1>People</h1><input id="people-q" style="max-width:260px" placeholder="Search people" value="${esc(state.peopleQ)}"></div>
-    ${people.length ? `<div class="cols">${people.map(([p, list]) => `<div class="card person-card">
-      <h3><span>${esc(p)} <span class="muted small">· ${list.length} item${list.length === 1 ? '' : 's'}</span></span>
-        <button class="btn small" data-action="offboard" data-person="${esc(p)}">Offboarding checklist</button></h3>
-      <ul class="list-plain">${list.map(i => `<li><a href="#" data-action="edit-item" data-id="${i.id}">${esc(i.name)}</a><span class="sub">${esc(CAT[i.category]?.label || '')}</span></li>`).join('')}</ul>
-    </div>`).join('')}</div>`
-      : '<div class="card empty">No one has items assigned yet. Fill in "Assigned to" on an item and they\'ll show up here.</div>'}`;
+  const f = state.people;
+  const locations = [...new Set(peopleList().flatMap(p => p.locations))].sort();
+  return `<div class="page-head"><h1>People</h1></div>
+    <div class="filters">
+      <input id="p-q" placeholder="Search name, item, serial…" value="${esc(f.q)}">
+      <select id="p-location"><option value="">All locations</option>${locations.map(l => `<option ${f.location === l ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <select id="p-group"><option value="">Has any item</option>${GROUPS.map(g => `<option value="${esc(g)}" ${f.group === g ? 'selected' : ''}>Has ${esc(g.toLowerCase())}</option>`).join('')}</select>
+      <select id="p-sort">
+        ${[['name', 'Sort: Name A–Z'], ['items', 'Sort: Most items'], ['next', 'Sort: Next date soonest'], ['location', 'Sort: Location']]
+          .map(([v, l]) => `<option value="${v}" ${f.sort === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    <div class="card" style="padding:0" id="people-table">${peopleTable()}</div>`;
 }
 
-function printOffboarding(person) {
-  const list = openItems().filter(i => (i.assigned_to || '').trim() === person);
-  const isLicense = i => CAT[i.category]?.group === 'Software & Cloud';
+function peopleTable() {
+  const f = state.people, needle = f.q.trim().toLowerCase();
+  let rows = peopleList().filter(p => {
+    if (f.location && !p.locations.includes(f.location)) return false;
+    if (f.group && !p.groups.has(f.group)) return false;
+    if (needle) {
+      const hay = [p.name, ...p.locations, ...p.items.flatMap(i => [i.name, i.serial, i.asset_tag, i.model, i.details?.hostname])].join(' ').toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+  const by = {
+    name: (a, b) => a.name.localeCompare(b.name),
+    items: (a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name),
+    next: (a, b) => (a.next?.left ?? 1e9) - (b.next?.left ?? 1e9),
+    location: (a, b) => (a.locations[0] || '~').localeCompare(b.locations[0] || '~') || a.name.localeCompare(b.name),
+  };
+  rows.sort(by[f.sort] || by.name);
+  const locNames = canonicalNames('location');
+  if (!state.items.some(i => cleanName(i.assigned_to))) return '<div class="empty">No one has items assigned yet. Fill in "Assigned to" on an item and they\'ll show up here.</div>';
+  if (!rows.length) return '<div class="empty">No people match these filters.</div>';
+  return `<div class="table-wrap"><table>
+    <tr><th>Name</th><th>Location</th><th>Hardware</th><th>Licenses</th><th>Next date</th><th></th></tr>
+    ${rows.map(p => {
+      const open = f.open.has(p.key);
+      return `<tr class="clickable" data-action="toggle-person" data-key="${esc(p.key)}">
+        <td><strong>${open ? '▾' : '▸'} ${esc(p.name)}</strong><div class="sub">${p.items.length} item${p.items.length === 1 ? '' : 's'}</div></td>
+        <td>${esc(p.locations.join(', '))}</td>
+        <td>${p.hw}</td><td>${p.lic}</td>
+        <td>${p.next ? `${fmtDate(p.next.date)}<div>${badge(p.next.left)}</div>` : '<span class="muted">—</span>'}</td>
+        <td style="text-align:right"><button class="btn small" data-action="offboard" data-key="${esc(p.key)}">Offboarding checklist</button></td>
+      </tr>
+      ${open ? `<tr><td colspan="6" style="background:#f8fafc;padding:6px 16px 12px">
+        <ul class="list-plain">${p.items.map(i => `<li><span><a href="#" data-action="edit-item" data-id="${i.id}">${esc(i.name)}</a>
+          <div class="sub">${esc(CAT[i.category]?.label || '')}${i.serial ? ' · S/N ' + esc(i.serial) : ''}${i.location ? ' · ' + esc(locNames.get(nameKey(i.location)) || i.location) : ''}</div></span>
+          <span class="nw">${i.expiry_date ? badge(daysLeft(i.expiry_date)) : ''}</span></li>`).join('')}</ul></td></tr>` : ''}`;
+    }).join('')}
+  </table></div>`;
+}
+
+function printOffboarding(key) {
+  const list = openItems().filter(i => nameKey(i.assigned_to) === key);
+  const person = canonicalNames('assigned_to').get(key) || key;
   const hw = list.filter(i => !isLicense(i)), lic = list.filter(isLicense);
   const box = '☐';
-  let area = document.getElementById('print-area');
-  if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
-  area.innerHTML = `<h1>Offboarding checklist: ${esc(person)}</h1>
+  printArea(`<h1>Offboarding checklist: ${esc(person)}</h1>
     <p>${esc(state.ws.name)} · Printed ${fmtDate(todayStr())} · Last day: ____________ · Completed by: ____________</p>
     <h2>Accounts and access</h2><ul style="list-style:none;padding:0">
       ${['Disable sign-in (Active Directory / Entra ID / Google Workspace)', 'Revoke active sessions and remove MFA devices',
@@ -661,11 +963,7 @@ function printOffboarding(person) {
     ${hw.length ? `<ul style="list-style:none;padding:0">${hw.map(i => `<li>${box} ${esc(i.name)}${i.serial ? ` · S/N ${esc(i.serial)}` : ''}${i.asset_tag ? ` · Tag ${esc(i.asset_tag)}` : ''}</li>`).join('')}</ul>` : '<p>None recorded.</p>'}
     <h2>Afterwards</h2><ul style="list-style:none;padding:0">
       <li>${box} Wipe and reimage returned devices</li><li>${box} Update "Assigned to" and status in RenewalWatch</li>
-      <li>${box} Reduce seat counts at next renewal if not reassigned</li></ul>`;
-  document.body.classList.add('printing');
-  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
-  window.addEventListener('afterprint', done);
-  window.print();
+      <li>${box} Reduce seat counts at next renewal if not reassigned</li></ul>`);
 }
 
 // ---------------- settings ----------------
@@ -683,7 +981,8 @@ function viewSettings() {
         <p><span class="plan ${pro ? 'pro' : ''}">${pro ? 'Pro' : 'Free'}</span>
         ${pro ? ' Unlimited items, all categories, team access and insights.' : ` ${state.items.length} of ${FREE_ITEM_LIMIT} items used.`}</p>
         ${owner ? (pro ? '<button class="btn" data-action="manage-billing">Manage billing</button>'
-          : `<button class="btn primary" data-action="upgrade">Upgrade to Pro · ${esc(state.cfg.priceLabel)}</button>`) : '<p class="small muted">Only the owner can change the plan.</p>'}
+          : `<span class="chip-row"><button class="btn primary" data-action="upgrade" data-period="monthly">Upgrade to Pro · ${esc(state.cfg.priceLabel)}</button>
+    <button class="btn" data-action="upgrade" data-period="yearly">${esc(state.cfg.priceLabelYearly)} · 2 months free</button></span>`) : '<p class="small muted">Only the owner can change the plan.</p>'}
       </div>
     </div>
     <div class="card"><h2>Email reminders</h2>
@@ -702,6 +1001,7 @@ function viewSettings() {
         <p class="small muted">They'll join this workspace when they create an account or sign in with that email.</p>`
         : !pro ? '<p class="small muted">Adding team members is part of Pro.</p>' : ''}
     </div>
+    ${calendarCard(pro, owner)}
     <div class="card"><h2>Import and export</h2>
       <div class="chip-row"><button class="btn" data-action="export-csv">Export all items (CSV)</button>
         ${pro ? `<button class="btn" data-action="csv-template">Download import template</button>
@@ -709,6 +1009,23 @@ function viewSettings() {
       ${pro ? '' : '<p class="small muted" style="margin-top:8px">Importing from a spreadsheet is part of Pro.</p>'}
     </div>
     <div class="card"><h2>Account</h2><p>Signed in as <strong>${esc(me()?.email)}</strong></p><button class="btn" data-action="signout">Sign out</button></div>`;
+}
+
+function calendarCard(pro, owner) {
+  if (!pro) return '<div class="card"><h2>Calendar</h2><p class="small muted">See every renewal date in Outlook or Google Calendar automatically. Part of Pro.</p></div>';
+  if (!state.ws.calendar_token) return '<div class="card"><h2>Calendar</h2><p class="small muted">The calendar feature needs a quick database update. Run the latest upgrade script in Supabase.</p></div>';
+  const url = `${location.origin}/api/calendar?token=${state.ws.calendar_token}`;
+  return `<div class="card"><h2>Calendar</h2>
+    <p class="small muted">Subscribe once and every renewal date appears in your calendar, with a reminder a week before. It updates by itself.
+      Anyone with this link can see your renewal dates, so keep it private.</p>
+    <div class="chip-row"><input id="cal-url" readonly value="${esc(url)}" style="flex:1;min-width:240px"><button class="btn" data-action="copy-cal">Copy link</button></div>
+    <p class="small" style="margin:12px 0 0;line-height:1.7">
+      <strong>Outlook:</strong> Calendar, Add calendar, Subscribe from web, paste the link.<br>
+      <strong>Google Calendar:</strong> next to Other calendars click +, then From URL, paste the link.<br>
+      <strong>iPhone:</strong> Settings, Calendar, Accounts, Add Account, Other, Add Subscribed Calendar.</p>
+    <p class="small muted" style="margin-bottom:0">Calendar apps refresh subscribed calendars on their own schedule, usually every few hours.</p>
+    ${owner ? '<p style="margin:10px 0 0"><button class="btn small" data-action="reset-cal">Reset link</button> <span class="small muted">Use this if the link was shared by mistake.</span></p>' : ''}
+  </div>`;
 }
 
 async function saveWorkspaceName(form) {
@@ -737,8 +1054,8 @@ async function invite(form) {
   await loadWorkspace(); render(); toast(`Invited ${email}. Let them know to sign up at ${location.origin}/app`);
 }
 
-function upgrade() {
-  const link = state.cfg.paymentLink;
+function upgrade(period = 'monthly') {
+  const link = period === 'yearly' ? state.cfg.paymentLinkYearly : state.cfg.paymentLink;
   if (!link) return toast('Payments are not set up yet.', true);
   const url = new URL(link);
   url.searchParams.set('client_reference_id', state.ws.id);
@@ -756,7 +1073,7 @@ function manageBilling() {
 
 // ---------------- CSV ----------------
 const BASE_COLS = ['name', 'category', 'vendor', 'model', 'serial', 'asset_tag', 'assigned_to', 'location', 'status', 'purchase_date', 'cost',
-  'expiry_date', 'renewal_cost', 'billing_cycle', 'auto_renew', 'recur_months', 'notes'];
+  'useful_life_years', 'expiry_date', 'renewal_cost', 'billing_cycle', 'auto_renew', 'recur_months', 'notes'];
 
 function csvCell(v) {
   const s = v === null || v === undefined ? '' : String(v);
@@ -772,17 +1089,20 @@ function download(name, text) {
 
 function exportCsv() {
   const detailKeys = [...new Set(state.items.flatMap(i => Object.keys(i.details || {})))].sort();
-  const header = [...BASE_COLS, ...detailKeys.map(k => `details.${k}`)];
+  const header = [...BASE_COLS, 'current_value', ...detailKeys.map(k => `details.${k}`)];
   const lines = [header.join(',')];
-  for (const i of state.items) lines.push([...BASE_COLS.map(c => i[c]), ...detailKeys.map(k => i.details?.[k])].map(csvCell).join(','));
+  for (const i of state.items) {
+    const bv = bookValue(i);
+    lines.push([...BASE_COLS.map(c => i[c]), bv ? bv.value.toFixed(2) : '', ...detailKeys.map(k => i.details?.[k])].map(csvCell).join(','));
+  }
   download(`renewalwatch-${todayStr()}.csv`, '﻿' + lines.join('\r\n'));
 }
 
 function csvTemplate() {
   const header = [...BASE_COLS, 'details.hostname', 'details.ip', 'details.seats_total', 'details.seats_used'];
   const ex = [
-    ['Reception laptop', 'computer', 'Dell', 'Latitude 5450', 'ABC1234', 'IT-0042', 'Jane Smith', 'Woodbridge', 'active', '2024-03-01', '1499', '2027-03-01', '', 'one_time', 'false', '', '3-year ProSupport', 'WS-RECEP01', '', '', ''],
-    ['Microsoft 365 Business Premium', 'saas', 'Microsoft', '', '', '', '', '', 'active', '', '', '2027-01-15', '9600', 'annual', 'true', '12', '', '', '', '40', '36'],
+    ['Reception laptop', 'computer', 'Dell', 'Latitude 5450', 'ABC1234', 'IT-0042', 'Jane Smith', 'Woodbridge', 'active', '2024-03-01', '1499', '4', '2027-03-01', '', 'one_time', 'false', '', '3-year ProSupport', 'WS-RECEP01', '', '', ''],
+    ['Microsoft 365 Business Premium', 'saas', 'Microsoft', '', '', '', '', '', 'active', '', '', '', '2027-01-15', '9600', 'annual', 'true', '12', '', '', '', '40', '36'],
   ];
   download('renewalwatch-import-template.csv', [header, ...ex].map(r => r.map(csvCell).join(',')).join('\r\n'));
 }
@@ -824,14 +1144,15 @@ export function csvRowsToItems(rows, wsId) {
     cat = CAT[cat] ? cat : byLabel[cat] || 'other_hw';
     const billing = BILLING.find(b => b.id === o.billing_cycle || b.label.toLowerCase() === (o.billing_cycle || '').toLowerCase())?.id || null;
     const status = STATUSES.find(s => s.id === o.status || s.label.toLowerCase() === (o.status || '').toLowerCase())?.id || 'active';
-    const recur = parseInt(o.recur_months, 10);
+    const recur = parseInt(o.recur_months, 10), life = parseInt(o.useful_life_years, 10);
     return {
       workspace_id: wsId, category: cat, name: (o.name || '').slice(0, 200),
       vendor: o.vendor || null, model: o.model || null, serial: o.serial || null, asset_tag: o.asset_tag || null,
       assigned_to: o.assigned_to || null, location: o.location || null, status,
       purchase_date: date(o.purchase_date || ''), cost: num(o.cost || ''), expiry_date: date(o.expiry_date || ''),
       renewal_cost: num(o.renewal_cost || ''), billing_cycle: billing, auto_renew: /^(true|yes|y|1)$/i.test(o.auto_renew || ''),
-      recur_months: recur >= 1 && recur <= 120 ? recur : null, notes: o.notes || null, details,
+      recur_months: recur >= 1 && recur <= 120 ? recur : null, useful_life_years: life >= 1 && life <= 30 ? life : null,
+      notes: o.notes || null, details,
     };
   }).filter(i => i.name);
 }
@@ -839,6 +1160,7 @@ export function csvRowsToItems(rows, wsId) {
 async function importCsv(file) {
   const text = await file.text();
   const items = csvRowsToItems(parseCsv(text), state.ws.id);
+  items.forEach(i => snapNames(i));
   if (!items.length) return toast('No rows with a "name" column found', true);
   if (!confirm(`Import ${items.length} item${items.length === 1 ? '' : 's'}?`)) return;
   let added = 0;
@@ -871,11 +1193,33 @@ document.addEventListener('click', async e => {
     case 'close-modal': return closeModal();
     case 'delete-item': return deleteItem(document.querySelector('.modal-bg')?.dataset.id);
     case 'renew': return markRenewed(el.dataset.id);
-    case 'upgrade': return upgrade();
+    case 'upgrade': return upgrade(el.dataset.period);
+    case 'check-now': return checkNow(el);
+    case 'print-label': return printLabels([state.items.find(i => i.id === el.dataset.id)].filter(Boolean));
+    case 'print-labels': return printLabels(filteredItems());
+    case 'open-file': return openAttachment(el.dataset.name);
+    case 'delete-file': return deleteAttachment(el.dataset.name);
+    case 'copy-cal': {
+      const input = document.getElementById('cal-url');
+      try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
+      return toast('Calendar link copied');
+    }
+    case 'reset-cal': {
+      if (!confirm('Make a new calendar link? Calendars subscribed with the old link will stop updating.')) return;
+      const { error } = await state.sb.from('workspaces').update({ calendar_token: crypto.randomUUID() }).eq('id', state.ws.id);
+      if (error) return toast(error.message, true);
+      await refreshWorkspaceRow(); render(); return toast('New calendar link created');
+    }
     case 'manage-billing': return manageBilling();
     case 'export-csv': return exportCsv();
     case 'csv-template': return csvTemplate();
-    case 'offboard': return printOffboarding(el.dataset.person);
+    case 'offboard': e.stopPropagation(); return printOffboarding(el.dataset.key);
+    case 'toggle-person': {
+      const k = el.dataset.key, set = state.people.open;
+      set.has(k) ? set.delete(k) : set.add(k);
+      document.getElementById('people-table').innerHTML = peopleTable();
+      return;
+    }
     case 'remove-member': {
       if (!confirm('Remove this person from the workspace?')) return;
       const { error } = await state.sb.from('members').delete().eq('workspace_id', state.ws.id).eq('user_id', el.dataset.user);
@@ -909,10 +1253,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('input', e => {
   const id = e.target.id;
   if (id === 'f-q') { state.filters.q = e.target.value; document.getElementById('inv-table').innerHTML = inventoryTable(); }
-  if (id === 'people-q') {
-    state.peopleQ = e.target.value; render();
-    const el = document.getElementById('people-q'); el.focus(); el.setSelectionRange(el.value.length, el.value.length);
-  }
+  if (id === 'p-q') { state.people.q = e.target.value; document.getElementById('people-table').innerHTML = peopleTable(); }
 });
 
 document.addEventListener('change', async e => {
@@ -921,12 +1262,17 @@ document.addEventListener('change', async e => {
     state.filters[id.slice(2)] = e.target.value;
     document.getElementById('inv-table').innerHTML = inventoryTable();
   }
+  if (['p-location', 'p-group', 'p-sort'].includes(id)) {
+    state.people[id.slice(2)] = e.target.value;
+    document.getElementById('people-table').innerHTML = peopleTable();
+  }
   if (id === 'ws-switch') {
     state.ws = state.workspaces.find(w => w.id === e.target.value);
     lsSet('rw_ws', state.ws.id);
     await loadWorkspace(); render();
   }
   if (id === 'csv-file' && e.target.files[0]) importCsv(e.target.files[0]);
+  if (id === 'attach-input' && e.target.files[0]) { uploadAttachment(e.target.files[0]); e.target.value = ''; }
 });
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
