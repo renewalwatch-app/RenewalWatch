@@ -117,9 +117,9 @@ The Pro plan adds:
 ## Files
 
 1. `index.html`: landing page
-2. `app.html` and `assets/app.js`: the app 
+2. `app.html` and `assets/app.js`: the app
 3. `assets/categories.js`: item types and their fields. Edit this to add a category, and also add the category to `free_cats` in schema.sql if it should be free.
 4. `api/config.js`: public settings for the browser
 5. `api/stripe-webhook.js`: switches workspaces to Pro or Free
 6. `api/cron-reminders.js`: the daily reminder emails
-7. `supabase/schema.sql`: tables, security rules and free-plan limits 
+7. `supabase/schema.sql`: tables, security rules and free-plan limits

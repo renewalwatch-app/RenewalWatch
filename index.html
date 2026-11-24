@@ -127,7 +127,6 @@
     © <span id="yr"></span> RenewalWatch · Made in Canada 🇨🇦 · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
   </footer>
   <script>
-    if (/access_token|type=recovery|error_description/.test(location.hash)) location.replace('/app' + location.hash);
     document.getElementById('yr').textContent = new Date().getFullYear();
     fetch('/api/config').then(r => r.json()).then(c => { if (c.priceLabel) document.getElementById('price-label').textContent = c.priceLabel; }).catch(() => {});
   </script>
