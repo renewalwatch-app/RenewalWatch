@@ -10,5 +10,6 @@ export function GET() {
     portalLink: env('STRIPE_PORTAL_LINK'),
     priceLabel: env('PRICE_LABEL', '$12/month'),
     priceLabelYearly: env('PRICE_LABEL_YEARLY', '$120/year'),
+    gaMeasurementId: env('GA_MEASUREMENT_ID'),
   });
 }

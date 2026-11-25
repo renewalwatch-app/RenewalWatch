@@ -6,6 +6,13 @@
   <title>RenewalWatch: never miss an IT renewal, warranty or expiry</title>
   <meta name="description" content="Track laptops, servers, software licenses, domains, SSL certificates and IT contracts in one place. Get an email before anything expires. Free for up to 25 items.">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="RenewalWatch">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="stylesheet" href="/assets/styles.css">
   <style>
     .lp-nav { max-width: 1100px; margin: auto; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
@@ -56,6 +63,7 @@
       <p class="small muted" style="margin-top:12px">Built for the one-person IT department, office managers and small MSPs.</p>
     </div>
     <div class="mock" aria-hidden="true">
+      <div style="font-weight:800;font-size:13px;letter-spacing:.06em;color:var(--brand-dark);margin-bottom:2px">SAMPLE DASHBOARD</div>
       <div class="small muted" style="font-weight:700;margin-bottom:6px">COMING UP</div>
       <div class="mock-row"><span><strong>FW-01 FortiGate subscription</strong><div class="sub">Network device</div></span><span class="badge b-red">3d overdue</span></div>
       <div class="mock-row"><span><strong>company.ca domain</strong><div class="sub">Domain name · not auto-renewing</div></span><span class="badge b-amber">6d left</span></div>
@@ -137,8 +145,17 @@
   </footer>
   <script>
     if (/access_token|type=recovery|error_description/.test(location.hash)) location.replace('/app' + location.hash);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     document.getElementById('yr').textContent = new Date().getFullYear();
-    fetch('/api/config').then(r => r.json()).then(c => {
+    fetch('/api/config').then(r => r.json()).then(async c => {
+      if (c.gaMeasurementId) {
+        const ga = await import('/assets/analytics.js');
+        ga.initAnalytics(c.gaMeasurementId);
+        document.addEventListener('click', e => {
+          const a = e.target.closest('a.btn, a[href="/privacy"], a[href="/terms"], details summary');
+          if (a) ga.track('home_click', { label: (a.textContent || '').trim().slice(0, 60) });
+        });
+      }
       if (c.priceLabel) document.getElementById('price-label').textContent = c.priceLabel;
       if (c.priceLabelYearly) document.getElementById('price-label-y').textContent = c.priceLabelYearly;
     }).catch(() => {});

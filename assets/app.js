@@ -1,5 +1,6 @@
 import { CATEGORIES, CAT, GROUPS, FREE_ITEM_LIMIT, isFreeCategory, STATUSES, BILLING, EXTRA_REMINDER_DATES } from './categories.js';
 import { qrSvg } from './qrcode.js';
+import { initAnalytics, track, trackPage } from './analytics.js';
 
 const SUPABASE_CDN = 'https://esm.sh/@supabase/supabase-js@2';
 const state = {
@@ -91,6 +92,7 @@ async function boot() {
   root.innerHTML = '<div class="auth-wrap"><p class="muted">Loading…</p></div>';
   state.recovery = location.hash.includes('type=recovery');
   try { state.cfg = await (await fetch('/api/config')).json(); } catch { state.cfg = null; }
+  initAnalytics(state.cfg?.gaMeasurementId, { autoPageView: false });
   if (!state.cfg?.supabaseUrl || !state.cfg?.supabaseAnonKey) return renderSetup();
 
   let createClient;
@@ -123,6 +125,7 @@ function renderSetup() {
 }
 
 function renderAuth(tab = 'signin', message = '', isErr = false) {
+  trackPage(`/app/${tab === 'signup' ? 'create-account' : tab === 'forgot' ? 'forgot-password' : 'sign-in'}`, 'RenewalWatch sign in');
   root.innerHTML = `<div class="auth-wrap"><div class="card auth-card">
     <a class="logo" href="/" style="color:var(--ink);margin-bottom:14px"><span class="logo-mark" style="color:#fff">R</span>RenewalWatch</a>
     <div class="tabs">
@@ -134,6 +137,7 @@ function renderAuth(tab = 'signin', message = '', isErr = false) {
       <div class="field"><label>Work email</label><input name="email" type="email" required autocomplete="email"></div>
       ${tab !== 'forgot' ? `<div class="field"><label>Password</label><input name="password" type="password" required minlength="8" autocomplete="${tab === 'signup' ? 'new-password' : 'current-password'}"></div>` : ''}
       <button class="btn primary" style="width:100%;justify-content:center">${tab === 'signin' ? 'Sign in' : tab === 'signup' ? 'Create free account' : 'Send reset link'}</button>
+      ${tab === 'signup' ? '<p class="small muted" style="margin:10px 0 0;text-align:center">By creating an account you agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>.</p>' : ''}
     </form>
     <p class="small muted" style="margin-top:14px;text-align:center">
       ${tab === 'forgot' ? '<a href="#" data-action="auth-tab" data-tab="signin">Back to sign in</a>' : '<a href="#" data-action="auth-tab" data-tab="forgot">Forgot password?</a>'}
@@ -151,9 +155,11 @@ async function submitAuth(form) {
     if (tab === 'signin') {
       const { error } = await state.sb.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      track('login', { method: 'email' });
     } else if (tab === 'signup') {
       const { data, error } = await state.sb.auth.signUp({ email, password, options: { emailRedirectTo: `${location.origin}/app` } });
       if (error) throw error;
+      track('sign_up', { method: 'email' });
       if (!data.session) renderAuth('signin', 'Check your email for a confirmation link, then sign in.');
     } else {
       const { error } = await state.sb.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/app` });
@@ -231,6 +237,7 @@ async function handleUpgradeReturn() {
     await refreshWorkspaceRow();
   }
   render();
+  if (isPro()) track('upgrade_complete');
   toast(isPro() ? 'Pro is active. Thanks for upgrading!' : 'Pro is still activating. Refresh in a minute.', !isPro());
 }
 
@@ -263,12 +270,14 @@ function route() {
     state.view = 'inventory';
     history.replaceState(null, '', location.pathname + location.search + '#inventory');
     render();
+    trackPage('/app/scan', 'RenewalWatch QR scan');
     if (it) openItemModal(it);
     else toast('That item isn\'t in this workspace. If you belong to more than one, switch workspace in Settings.', true);
     return;
   }
   state.view = h;
   render();
+  trackPage(`/app/${state.view}`, `RenewalWatch ${state.view}`);
 }
 
 window.addEventListener('hashchange', () => {
@@ -795,7 +804,7 @@ async function saveItem(form, existing) {
   btn.disabled = false;
   if (error) return toast(friendlyError(error), true);
   if (existing) state.items = state.items.map(i => i.id === data.id ? data : i);
-  else state.items.push(data);
+  else { state.items.push(data); track('add_item', { category: data.category }); }
   closeModal();
   toast(existing ? 'Saved' : 'Item added');
   render();
@@ -1006,6 +1015,7 @@ function viewSettings() {
         <p class="small muted">They'll join this workspace when they create an account or sign in with that email.</p>`
         : !pro ? '<p class="small muted">Adding team members is part of Pro.</p>' : ''}
     </div>
+    ${installCard()}
     ${calendarCard(pro, owner)}
     <div class="card"><h2>Import and export</h2>
       <div class="chip-row"><button class="btn" data-action="export-csv">Export all items (CSV)</button>
@@ -1014,6 +1024,18 @@ function viewSettings() {
       ${pro ? '' : '<p class="small muted" style="margin-top:8px">Importing from a spreadsheet is part of Pro.</p>'}
     </div>
     <div class="card"><h2>Account</h2><p>Signed in as <strong>${esc(me()?.email)}</strong></p><button class="btn" data-action="signout">Sign out</button></div>`;
+}
+
+function installCard() {
+  if (isInstalled()) return '';
+  return `<div class="card"><h2>Install on your phone or computer</h2>
+    <p class="small muted">Add RenewalWatch to your home screen so it opens like an app, full screen with its own icon.</p>
+    ${installPrompt ? '<p><button class="btn primary" data-action="install-app">Install RenewalWatch</button></p>' : ''}
+    <p class="small" style="margin:0;line-height:1.7">
+      <strong>iPhone or iPad:</strong> open renewalwatch.ca/app in Safari, tap the Share button, then Add to Home Screen.<br>
+      <strong>Android:</strong> open it in Chrome, tap the ⋮ menu, then Install app or Add to Home screen.<br>
+      <strong>Computer:</strong> in Chrome or Edge, click the install icon at the right end of the address bar.</p>
+  </div>`;
 }
 
 function calendarCard(pro, owner) {
@@ -1061,6 +1083,7 @@ async function invite(form) {
 
 function upgrade(period = 'monthly') {
   const link = period === 'yearly' ? state.cfg.paymentLinkYearly : state.cfg.paymentLink;
+  track('begin_checkout', { plan: period, currency: 'CAD', value: period === 'yearly' ? 120 : 12 });
   if (!link) return toast('Payments are not set up yet.', true);
   const url = new URL(link);
   url.searchParams.set('client_reference_id', state.ws.id);
@@ -1180,6 +1203,9 @@ async function importCsv(file) {
 }
 
 // ---------------- events ----------------
+// Button clicks reported to Google Analytics (action name only, never what was typed).
+const TRACKED_ACTIONS = ['new-item', 'edit-item', 'renew', 'upgrade', 'manage-billing', 'export-csv', 'csv-template', 'offboard',
+  'print-label', 'print-labels', 'check-now', 'copy-cal', 'reset-cal', 'install-app', 'open-file', 'toggle-person', 'signout'];
 // Only close a form when the press both starts and ends on the dark background.
 // (Selecting text in a field and letting go outside the form used to close it.)
 let pressedOnBackdrop = false;
@@ -1192,6 +1218,7 @@ document.addEventListener('click', async e => {
     return;
   }
   const a = el.dataset.action;
+  if (TRACKED_ACTIONS.includes(a)) track('app_click', { action: a });
   if (el.tagName === 'A' || el.tagName === 'BUTTON' && el.type !== 'submit') e.preventDefault();
   switch (a) {
     case 'auth-tab': return renderAuth(el.dataset.tab);
@@ -1205,6 +1232,12 @@ document.addEventListener('click', async e => {
     case 'renew': return markRenewed(el.dataset.id);
     case 'upgrade': return upgrade(el.dataset.period);
     case 'check-now': return checkNow(el);
+    case 'install-app': {
+      if (!installPrompt) return;
+      installPrompt.prompt();
+      await installPrompt.userChoice.catch(() => {});
+      installPrompt = null; return render();
+    }
     case 'print-label': return printLabels([state.items.find(i => i.id === el.dataset.id)].filter(Boolean));
     case 'print-labels': return printLabels(filteredItems());
     case 'open-file': return openAttachment(el.dataset.name);
@@ -1281,10 +1314,17 @@ document.addEventListener('change', async e => {
     lsSet('rw_ws', state.ws.id);
     await loadWorkspace(); render();
   }
-  if (id === 'csv-file' && e.target.files[0]) importCsv(e.target.files[0]);
-  if (id === 'attach-input' && e.target.files[0]) { uploadAttachment(e.target.files[0]); e.target.value = ''; }
+  if (id === 'csv-file' && e.target.files[0]) { track('app_click', { action: 'import-csv' }); importCsv(e.target.files[0]); }
+  if (id === 'attach-input' && e.target.files[0]) { track('app_click', { action: 'attach-file' }); uploadAttachment(e.target.files[0]); e.target.value = ''; }
 });
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// Phone app support: register the service worker and remember the install prompt (Android / desktop Chrome).
+let installPrompt = null;
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if (state.view === 'settings') render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('RenewalWatch installed'); });
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
 if (root) boot();

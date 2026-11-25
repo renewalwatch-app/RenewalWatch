@@ -72,6 +72,7 @@ Do this in Test mode first. Repeat it in Live mode when you're ready to charge.
 | CRON_SECRET | any random string of 32 or more characters (secret) |
 | PRICE_LABEL | `$12/month` |
 | PRICE_LABEL_YEARLY | `$120/year` |
+| GA_MEASUREMENT_ID | your Google Analytics ID, like `G-ABC123XYZ` (optional) |
 
 3. Deploy.
 4. Go to Settings, then Domains, and add `renewalwatch.ca`. Vercel shows DNS records to add in Namecheap.
