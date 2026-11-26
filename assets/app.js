@@ -485,7 +485,7 @@ function viewInventory() {
       <div class="chip-row">${isPro() ? '<button class="btn" data-action="print-labels" title="Prints a QR label for every item in the list below">Print QR labels</button>' : ''}<button class="btn" data-action="export-csv">Export CSV</button><button class="btn primary" data-action="new-item">+ Add item</button></div></div>
     ${isPro() ? '<p class="small muted" style="margin:-8px 0 12px">QR labels print for the items currently shown. Use 30-per-sheet address labels (Avery 5160 or similar) and print at 100% / actual size.</p>' : ''}
     <div class="filters">
-      <input id="f-q" placeholder="Search name, serial, person, IP…" value="${esc(f.q)}">
+      <input id="f-q" placeholder="Search item, serial, person, IP…" value="${esc(f.q)}">
       <select id="f-group"><option value="">All categories</option>${GROUPS.map(g => `<option ${f.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
       <select id="f-location"><option value="">All locations</option>${locations.map(l => `<option ${f.location === l ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <select id="f-status">
@@ -501,7 +501,7 @@ function inventoryTable() {
   const rows = filteredItems();
   if (!rows.length) return `<div class="empty">${state.items.length ? 'No items match these filters.' : 'No items yet.'}</div>`;
   return `<div class="table-wrap"><table>
-    <tr><th>Name</th><th>Category</th><th>Assigned to</th><th>Location</th><th>Key date</th><th>Status</th></tr>
+    <tr><th>Item</th><th>Category</th><th>Assigned to</th><th>Location</th><th>Key date</th><th>Status</th></tr>
     ${rows.map(i => {
       const cat = CAT[i.category];
       const ident = [i.serial && `S/N ${i.serial}`, i.asset_tag && `Tag ${i.asset_tag}`, i.details?.hostname, i.details?.ip || i.details?.mgmt_ip].filter(Boolean).join(' · ');
@@ -589,8 +589,9 @@ function openItemModal(item = null) {
     <form id="item-form">
       <div class="grid2">
         <div class="field"><label>Category</label><select name="category" id="cat-select">${catOptions}</select></div>
-        <div class="field"><label>Name *</label><input name="name" required maxlength="200" value="${v('name')}" placeholder="e.g. Reception laptop, FW-01, Microsoft 365 Business"></div>
+        <div class="field"><label>Item name *</label><input name="name" required maxlength="200" value="${v('name')}" placeholder="${esc(namePlaceholder(it.category))}"></div>
       </div>
+      <p class="small muted" style="margin:-6px 0 10px">The name you'll recognize this item by. The person who uses it goes in <strong>Assigned to</strong>.</p>
       ${!pro ? '<p class="small muted" style="margin-top:-4px">Servers, network gear, software, SaaS, domains, SSL, contracts and recurring tasks are part of Pro.</p>' : ''}
       <div class="grid3">
         <div class="field"><label>Vendor / manufacturer</label><input name="vendor" value="${v('vendor')}"></div>
@@ -650,6 +651,7 @@ function openItemModal(item = null) {
     const newCat = CAT[form.category.value];
     wrap.querySelector('#details-fields').innerHTML = detailFieldsHtml(newCat.id, current);
     wrap.querySelector('#date-label').textContent = newCat.dateLabel;
+    form.name.placeholder = namePlaceholder(newCat.id);
     const lifeField = wrap.querySelector('#life-field');
     lifeField.hidden = !isDepreciable({ category: newCat.id });
     form.useful_life_years.placeholder = `Default ${DEFAULT_LIFE[newCat.id] || 5}`;
@@ -763,6 +765,18 @@ async function removeAllAttachments(itemId) {
   const paths = (data || []).filter(f => f.id).map(f => `${attachDir(itemId)}/${f.name}`);
   if (paths.length) await state.sb.storage.from('attachments').remove(paths);
 }
+
+const NAME_EXAMPLES = {
+  computer: 'e.g. Reception laptop, Jane\'s desktop, LAP-014', peripheral: 'e.g. Boardroom monitor, Dock #3', printer: 'e.g. Front office printer',
+  mobile: 'e.g. Sales iPhone 15, Warehouse tablet', warranty: 'e.g. Dell ProSupport for laptops', other_hw: 'e.g. Boardroom TV, Label printer',
+  server: 'e.g. DC01, FILE-SRV, Hyper-V host 1', vm: 'e.g. SQL01, Print server VM', network: 'e.g. FW-01, Core switch, Warehouse AP',
+  storage: 'e.g. Synology NAS', ups: 'e.g. Server room UPS', backup: 'e.g. Nightly server backup, Microsoft 365 backup',
+  software: 'e.g. Adobe Acrobat, AutoCAD, QuickBooks', saas: 'e.g. Microsoft 365 Business Premium', security: 'e.g. SentinelOne EDR, Mimecast',
+  cloud: 'e.g. Azure subscription, AWS account', domain: 'e.g. company.ca', ssl: 'e.g. www.company.ca certificate',
+  support_contract: 'e.g. Fortinet FortiCare, HP server support', isp: 'e.g. Bell fibre, head office', phone_system: 'e.g. RingCentral phones',
+  lease: 'e.g. Copier lease', compliance: 'e.g. Cyber insurance policy, PCI scan', task: 'e.g. Quarterly access review, Test backup restore',
+};
+const namePlaceholder = cat => NAME_EXAMPLES[cat] || 'e.g. Reception laptop, FW-01, Microsoft 365';
 
 function readDetails(form) {
   const out = {};
